@@ -1,0 +1,153 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Dark theme — Nocturne palette mapped onto the Industry token names.
+   The tonal ramps are FLIPPED (100 ↔ 900) so markup written against the
+   light system stays readable: "neutral-800 text" is near-black on light
+   and near-white on dark.
+   ──────────────────────────────────────────────────────────────────────── */
+html[data-theme="dark"] {
+  --color-bg: #161826;
+  --color-surface: #232532;
+  --color-text: #e9e9ed;
+  --color-accent: #9184d9;
+  --color-accent-2: #a7a1db;
+  --color-divider: color-mix(in srgb, #e9e9ed 16%, transparent);
+
+  --color-neutral-100: #292b31;
+  --color-neutral-200: #3f424d;
+  --color-neutral-300: #595d6c;
+  --color-neutral-400: #75798c;
+  --color-neutral-500: #9397ab;
+  --color-neutral-600: #b2b6ca;
+  --color-neutral-700: #cfd3e5;
+  --color-neutral-800: #e4e7f5;
+  --color-neutral-900: #f3f5fe;
+
+  --color-accent-100: #2b2741;
+  --color-accent-200: #423a6a;
+  --color-accent-300: #5d5294;
+  --color-accent-400: #796cbf;
+  --color-accent-500: #968ae0;
+  --color-accent-600: #b5abfc;
+  --color-accent-700: #d2cefd;
+  --color-accent-800: #e7e5fe;
+  --color-accent-900: #f5f4ff;
+
+  --color-accent-2-100: #2b2837;
+  --color-accent-2-200: #423e59;
+  --color-accent-2-300: #5d587f;
+  --color-accent-2-400: #7873a3;
+  --color-accent-2-500: #9690c9;
+  --color-accent-2-600: #b5afe8;
+  --color-accent-2-700: #d2cefd;
+  --color-accent-2-800: #e7e5fe;
+  --color-accent-2-900: #f5f4ff;
+
+  --font-heading: "Inter", system-ui, sans-serif;
+  --font-heading-weight: 600;
+  --font-body: "Inter", system-ui, sans-serif;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 3px 10px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+html {
+  color-scheme: light;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+
+/* ── responsive layout helpers ─────────────────────────────────────────── */
+.page {
+  width: 100%;
+  margin: 0 auto;
+  padding: clamp(14px, 3.5vw, 28px);
+}
+.hero-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: var(--space-8);
+  align-items: start;
+}
+.cols-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+.h-display { font-size: clamp(40px, 8vw, 64px); }
+.h-hero    { font-size: clamp(32px, 6.5vw, 56px); }
+.h-page    { font-size: clamp(28px, 6vw, 46px); }
+
+.site-nav {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+@media (max-width: 920px) {
+  .hero-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .site-nav { padding: 10px 14px !important; gap: 10px 14px !important; }
+  .site-nav nav { gap: 14px !important; order: 3; width: 100%; }
+}
+@media (max-width: 560px) {
+  .cols-2 { grid-template-columns: 1fr; }
+}
+
+/* ── app helpers on top of the design system ───────────────────────────── */
+.zh-cell:hover {
+  border-color: var(--color-accent) !important;
+}
+.zh-row:hover {
+  background: color-mix(in srgb, var(--color-text) 4%, transparent);
+}
+.kicker {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-accent-700);
+}
+.mono {
+  font-family: ui-monospace, Menlo, monospace;
+}
+.codeblock {
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* visualizer stage primitives */
+.viz-stage {
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  min-height: 280px;
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow-x: auto;
+}
+.viz-msg {
+  min-height: 3.2em;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-neutral-800);
+}
