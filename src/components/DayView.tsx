@@ -9,6 +9,7 @@ import VizPlayer from "./VizPlayer";
 import Markdownish from "./Markdownish";
 import CodeRunner from "./CodeRunner";
 import QuizBlock from "./QuizBlock";
+import GuestNudge from "./GuestNudge";
 
 const KIND_LABEL = { lesson: "Lesson", review: "Review & checkpoint", project: "Project day" } as const;
 
@@ -43,6 +44,7 @@ export default function DayView({ id }: { id: string }) {
 
   return (
     <article className="page" style={{ maxWidth: 1160, display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
+      <GuestNudge />
       {/* breadcrumb */}
       <nav style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 12, flexWrap: "wrap" }} className="text-muted" aria-label="Breadcrumb">
         <Link href="/dashboard">Dashboard</Link>

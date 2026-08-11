@@ -30,12 +30,15 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
   const pulledFor = useRef<string | null>(null);
   const pushesToSkip = useRef(1);
 
-  // Pull + merge once per signed-in identity
+  // Pull + merge once per signed-in identity, then IMMEDIATELY push the merged
+  // result — this is what saves progress made as a guest the moment someone
+  // signs up or logs in, even if they close the tab right after.
   useEffect(() => {
     if (!hydrated || !authReady || !authUser || pulledFor.current === authUser.id) return;
     pulledFor.current = authUser.id;
-    pushesToSkip.current += 1; // the merge itself shouldn't trigger a push loop
-    fetchUserState(authUser.id).then((remote) => {
+    pushesToSkip.current += 1; // the merge itself shouldn't trigger a second push
+    const userId = authUser.id;
+    fetchUserState(userId).then((remote) => {
       if (remote) {
         mergeRemote({
           completedDays: remote.completedDays ?? [],
@@ -49,6 +52,23 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
           startDate: remote.startDate ?? null,
         });
       }
+      // Read the post-merge store directly (state updates are synchronous in
+      // zustand) and persist the union — or, for a brand-new account, the
+      // guest's local progress — to the server right now.
+      const s = useJourney.getState();
+      const state: SyncedState = {
+        completedDays: s.completedDays,
+        quizScores: s.quizScores,
+        srs: s.srs,
+        notes: s.notes,
+        bookmarks: s.bookmarks,
+        snippets: s.snippets,
+        projectChecks: s.projectChecks,
+        activityDates: s.activityDates,
+        startDate: s.startDate,
+        mode: s.mode,
+      };
+      pushUserState(userId, state);
     });
   }, [hydrated, authReady, authUser, mergeRemote]);
 
@@ -69,6 +89,30 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, authReady, authUser?.id, completedDays, quizScores, srs, notes, bookmarks, snippets, projectChecks, activityDates, startDate, mode]);
+
+  // Flush on tab hide/close so the debounce window can't drop the last action.
+  useEffect(() => {
+    if (!authUser) return;
+    const userId = authUser.id;
+    const flush = () => {
+      if (document.visibilityState !== "hidden") return;
+      const s = useJourney.getState();
+      pushUserState(userId, {
+        completedDays: s.completedDays,
+        quizScores: s.quizScores,
+        srs: s.srs,
+        notes: s.notes,
+        bookmarks: s.bookmarks,
+        snippets: s.snippets,
+        projectChecks: s.projectChecks,
+        activityDates: s.activityDates,
+        startDate: s.startDate,
+        mode: s.mode,
+      });
+    };
+    document.addEventListener("visibilitychange", flush);
+    return () => document.removeEventListener("visibilitychange", flush);
+  }, [authUser]);
 
   return <>{children}</>;
 }
