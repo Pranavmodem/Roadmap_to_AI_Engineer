@@ -2478,4 +2478,383 @@ Hints: np.log10 makes multiplicative gaps additive (Day 58's log-normal lesson);
       { label: 'Great Expectations & pandera — data contracts at scale', note: 'Today\'s pydantic pattern industrialized: declarative expectation suites, data docs, and CI integration for datasets. Skim the concepts — the capstone\'s ingest checks (Day 119) borrow this shape.' },
     ],
   },
+  {
+    id: 'd069', day: 69, week: 10, phase: 4, kind: 'lesson',
+    title: 'Feature Engineering',
+    analogy: 'Cutting ingredients so the pan can cook them',
+    objectives: [
+      'Encode categoricals appropriately: one-hot vs ordinal vs target encoding, with the trade-offs',
+      'Scale numeric features and state which model families care and which do not',
+      'Extract predictive features from datetimes (including cyclical encodings) and raw text columns',
+      'Explain train/test fitting discipline: transformers learn on train only',
+      'Build a leak-proof preprocessing pipeline with sklearn ColumnTransformer',
+    ],
+    prereqs: [
+      { day: 68, label: 'Cleaned, validated data' },
+      { day: 64, label: 'NumPy vectorized transforms' },
+      { day: 67, label: 'EDA — which signals are real' },
+    ],
+    eli5: `A pan can only cook what fits in it. Nobody sears a whole pumpkin; you cut it into pieces sized for the heat to reach the middle. Models are the pan: they eat fixed-size rows of numbers, and they can only "reach" patterns that the cut exposes. A raw timestamp is a whole pumpkin — one giant number the model can barely bite. Cut it into hour-of-day, day-of-week, is-weekend, and suddenly the pattern ("support tickets spike Monday mornings") is bite-sized. Feature engineering is knife work: same ingredients, cut so the learning can cook.
+
+Different dishes need different cuts. Category labels like "pro/basic/enterprise" become separate yes/no columns (one-hot) — unless the categories have a true order. Numbers on wildly different scales (tenure 1–60, spend 20–4,000) get standardized so distance-based learners don't think spend is 60× more important. And one knife rule is absolute, the same one from yesterday's kitchen: you season from the TRAIN shelf only. If your scaler learns the mean of the whole dataset — test rows included — your model has tasted the exam. The fix is not vigilance, it is machinery: a pipeline object that physically cannot fit on data you didn't hand it.`,
+    why: `On tabular data, better features beat fancier models — the winning move in Day 77's mini-competition and Day 83's churn project is almost always a feature, not a hyperparameter. The leakage discipline is career-critical: "fit the scaler on everything" is the most common silent bug in applied ML, inflating offline metrics and detonating in production. And the concept generalizes: prompt context selection (Day 108) and chunking for RAG (Day 114) are feature engineering for LLMs — deciding what the model gets to see, cut to the size it can digest.`,
+    tech: `### Categoricals
+
+**One-hot** (\`OneHotEncoder\`): one 0/1 column per category — the default for low cardinality (≤ ~15). Set \`handle_unknown="ignore"\` so an unseen category at inference maps to all-zeros instead of crashing. **Ordinal** (\`OrdinalEncoder\`): a single integer column — ONLY for true orders (basic < pro < enterprise); on unordered categories it invents a fake ranking that distance- and linear-models will obediently believe. **Target encoding** (replace category with the target mean for that category) is powerful for high cardinality but is a leakage machine unless computed out-of-fold — file under "later, carefully" (Day 77 revisits). High-cardinality IDs (user_id, zip) do NOT get one-hot into thousands of columns.
+
+### Numerics, datetimes, text
+
+**Scaling**: \`StandardScaler\` (mean 0, sd 1) or \`MinMaxScaler\`. Distance-based (k-NN, k-means), gradient-based (linear/logistic, neural nets — Day 71+) care a lot; tree-based models (Day 73–74) are split-based and scale-indifferent. **Skewed** amounts often benefit from log1p first (Day 58's tails). **Datetimes** decompose: hour, day-of-week, month, is_weekend, days-since-event; cyclical values need the sin/cos trick — encode hour as sin(2πh/24) and cos(2πh/24) so 23:00 and 01:00 are neighbors, as they are in reality. **Text** columns yield cheap features before embeddings exist in your toolkit (Day 92): length, word count, has_digits, exclamation count. **Interactions** (spend ÷ tenure = spend rate) and **binning** (tenure → 0–12/13–24/25+) inject domain knowledge linear models cannot invent.
+
+### The discipline, mechanized
+
+Transformers are learned: the scaler's mean, the encoder's category list, the imputer's median are all PARAMETERS — and parameters must come from training data only. \`fit_transform(X_train)\` then \`transform(X_test)\`; never fit on the full dataset. sklearn's **Pipeline** chains steps and **ColumnTransformer** routes columns (numerics → impute+scale; categoricals → impute+one-hot) into one object with a single fit/transform contract — making the right thing automatic, surviving into Day 82's production pipelines, and giving \`get_feature_names_out()\` for inspecting what the model actually eats.`,
+    viz: null,
+    guided: [
+      {
+        title: 'Encode and scale by hand — and watch the leak happen',
+        minutes: 20,
+        body: `1. Paste the starter — the cleaned churn-style dataset from this week, seeded, split 80/20 into train/test FIRST (before any transformer touches it).
+2. One-hot the \`plan\` column with \`OneHotEncoder(handle_unknown="ignore")\`: fit on train, transform both. Print the feature names. Then simulate the future: transform a row with plan="platinum" (never seen) and confirm it becomes all-zeros instead of an exception.
+3. Ordinal-encode plan as basic=0, pro=1, enterprise=2 — defensible, there is a real order. Now ordinal-encode \`region\` alphabetically and write one sentence on what a linear model would wrongly conclude ("west is 3× more region than east").
+4. Scale \`monthly_spend\` with StandardScaler fit on TRAIN; check test-transformed mean is NOT exactly 0 (it shouldn't be — test is scaled by train's parameters).
+5. Now commit the classic crime deliberately: fit the scaler on the FULL dataset, and compare the transformed train values against the honest version. The difference is small — which is exactly why this bug survives review. Write the rule: the size of the leak is not the point; the direction of information flow is.`,
+        code: `import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+rng = np.random.default_rng(seed=69)
+N = 1000
+df = pd.DataFrame({
+    "plan": rng.choice(["basic", "pro", "enterprise"], size=N, p=[0.55, 0.33, 0.12]),
+    "region": rng.choice(["north", "south", "east", "west"], size=N),
+    "tenure_months": rng.integers(1, 60, size=N),
+    "monthly_spend": np.round(rng.lognormal(3.4, 0.8, size=N), 2),
+    "signup_hour": rng.integers(0, 24, size=N),
+})
+df["churned"] = rng.random(N) < np.clip(
+    0.45 - 0.005 * df.tenure_months + 0.1 * (df.plan == "basic"), 0.05, 0.9)
+
+train, test = train_test_split(df, test_size=0.2, random_state=69)
+
+ohe = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+ohe.fit(train[["plan"]])
+print(ohe.get_feature_names_out())
+unseen = pd.DataFrame({"plan": ["platinum"]})
+print("unseen category ->", ohe.transform(unseen))   # all zeros, no crash
+
+scaler = StandardScaler().fit(train[["monthly_spend"]])
+test_scaled = scaler.transform(test[["monthly_spend"]])
+print("test mean after train-fit scaling:", test_scaled.mean().round(3))
+
+leaky = StandardScaler().fit(df[["monthly_spend"]])   # the crime
+print("honest vs leaky train mean:",
+      scaler.mean_[0].round(2), "vs", leaky.mean_[0].round(2))`,
+      },
+      {
+        title: 'ColumnTransformer — the whole kitchen in one object',
+        minutes: 22,
+        body: `1. Add the datetime knife work as plain pandas first (features are created before the transformer; the transformer handles impute/scale/encode): \`hour_sin = sin(2π·signup_hour/24)\`, \`hour_cos = cos(...)\`. Verify the payoff: compute the distance between hour 23 and hour 1 in raw form (22 apart) vs sin/cos form (close) — the encoding restored the clock\'s geometry.
+2. Add two more cut-by-hand features: \`spend_per_tenure = monthly_spend / tenure_months\` (an interaction) and \`tenure_bin\` via pd.cut (0–12 / 13–24 / 25+).
+3. Build the ColumnTransformer: numeric columns → SimpleImputer(median) + StandardScaler in a Pipeline; categorical columns (plan, region, tenure_bin) → SimpleImputer(most_frequent) + OneHotEncoder(handle_unknown="ignore"). Passthrough hour_sin/hour_cos (already in range).
+4. fit_transform on train, transform on test. Print the output shape and \`get_feature_names_out()\` — read the list aloud; this is EXACTLY what the model will eat, and being able to name every column is a debugging superpower.
+5. Prove the leak-proofing: the transformer, once fit, contains train-derived parameters only — print \`named_transformers_\` internals (the scaler\'s mean_, the encoder\'s categories_). One object, one fit, zero opportunities to season from the test shelf.
+6. Note what did NOT go in: refund_issued (Day 67\'s leak) is excluded by design, and the exclusion is documented in the feature list.`,
+        code: `import numpy as np
+import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+for frame in (train, test):
+    frame["hour_sin"] = np.sin(2 * np.pi * frame.signup_hour / 24)
+    frame["hour_cos"] = np.cos(2 * np.pi * frame.signup_hour / 24)
+    frame["spend_per_tenure"] = frame.monthly_spend / frame.tenure_months
+    frame["tenure_bin"] = pd.cut(frame.tenure_months, bins=[0, 12, 24, 60],
+                                 labels=["0-12", "13-24", "25+"])
+
+num_cols = ["tenure_months", "monthly_spend", "spend_per_tenure"]
+cat_cols = ["plan", "region", "tenure_bin"]
+cyc_cols = ["hour_sin", "hour_cos"]
+
+pre = ColumnTransformer([
+    ("num", Pipeline([("imp", SimpleImputer(strategy="median")),
+                      ("sc", StandardScaler())]), num_cols),
+    ("cat", Pipeline([("imp", SimpleImputer(strategy="most_frequent")),
+                      ("oh", OneHotEncoder(handle_unknown="ignore"))]), cat_cols),
+    ("cyc", "passthrough", cyc_cols),
+])
+
+X_train = pre.fit_transform(train)
+X_test = pre.transform(test)          # transform ONLY — no fitting on test
+print("train:", X_train.shape, " test:", X_test.shape)
+print(list(pre.get_feature_names_out()))
+print("scaler means (train-derived):",
+      pre.named_transformers_["num"].named_steps["sc"].mean_.round(2))`,
+      },
+    ],
+    practice: [
+      {
+        title: 'The leak hunt',
+        minutes: 18,
+        body: `Three preprocessing setups cross your code review. For each: leak or clean? Name the information flow, rank severity, and write the fix.
+
+A. \`scaler.fit(X)\` on the full dataset, then train/test split, then a model trained on the scaled train half.
+B. Target encoding: \`plan_churn_rate = df.groupby("plan")["churned"].mean()\` computed on ALL rows, mapped onto both train and test as a feature.
+C. \`imputer.fit(X_train)\`; \`X_test = imputer.transform(X_test)\`; model evaluated on X_test.
+
+Then the transfer question: your golden-set eval (Day 134 foreshadow) uses few-shot examples in the prompt. What is the analogous crime, and what is the analogous rule? (Answer shape: examples drawn from the eval set itself = fitting on test; the rule: eval cases must never appear in the prompt.)
+
+Hints: B is the worst — the feature literally contains averaged test-set TARGETS, not just statistics of inputs; A is real but mild (input statistics only); C is clean and is the exact pattern the ColumnTransformer mechanizes. Severity follows how much target information crosses the line.`,
+      },
+    ],
+    project: {
+      title: 'features.py — the feature factory',
+      brief: `Build \`features.py\` in your practice repo, structured for reuse in Days 70, 71, and 83: \`add_features(df)\` (pure function: cyclical hour, spend_per_tenure, tenure_bin, text-length features if a text column exists, the Day 68 was_missing flags kept), \`build_preprocessor(num_cols, cat_cols, passthrough)\` returning the ColumnTransformer, and a \`FEATURES.md\` block (docstring or file) listing every output feature with one line each: source column, transform, and why it should carry signal — plus an explicit EXCLUDED section naming refund_issued and the reason. Demo at the bottom: split, fit on train, transform both, print shapes and feature names. Commit it.`,
+      rubric: [
+        'add_features is pure and covered by at least three asserts (shapes, ranges, no NaN introduced)',
+        'Preprocessor fits on train only in the demo; test is transform-only',
+        'Cyclical encoding verified (hour 23 and hour 1 are near neighbors in sin/cos space)',
+        'Feature documentation lists every column with a one-line rationale',
+        'EXCLUDED section names the leak and why',
+        'Committed to the practice repo',
+      ],
+    },
+    mistakes: [
+      'Fitting any transformer (scaler, imputer, encoder) on the full dataset before splitting. Information flows from test into training — offline metrics inflate, production deflates. Split first, fit on train, always.',
+      'Ordinal-encoding unordered categories. The model reads the integers as magnitudes — "west > east" — and linear/distance models act on the fiction. One-hot unless a true order exists.',
+      'One-hot encoding a 10,000-value ID column into 10,000 features. High cardinality wants target encoding (done out-of-fold), frequency encoding, or exclusion.',
+      'Scaling everything for a tree model and believing it mattered. Trees split on thresholds; scaling is a no-op for them — know WHICH families care (distance- and gradient-based).',
+      'Naive target encoding computed on all rows — averaged test TARGETS become a training feature; the most concentrated leak in tabular ML.',
+      'Dropping the datetime column instead of decomposing it. The signal ("weekend signups churn more") lives in the parts, not the raw timestamp.',
+    ],
+    quiz: [
+      {
+        q: 'Why must StandardScaler be fit on the training split only?',
+        o: [
+          'Fitting on everything is slower',
+          'Test-set statistics leaking into training inflates offline metrics — the model has partially "seen" the exam; fit on train, transform test',
+          'The test set has different columns',
+          'sklearn raises an error otherwise',
+        ],
+        x: 1,
+        w: 'The scaler\'s mean/sd are learned parameters. Learning them from test rows lets test information shape training — a small leak here, a catastrophic one with target encoding, but the same broken direction of information flow.',
+        revisit: 69,
+      },
+      {
+        q: 'Encoding hour-of-day as sin(2πh/24) and cos(2πh/24) exists to…',
+        o: [
+          'Compress 24 values into 2 columns',
+          'Make 23:00 and 01:00 near neighbors, matching the clock\'s circular geometry that a raw 0–23 integer breaks',
+          'Normalize the feature to mean zero',
+          'Help tree models split on time',
+        ],
+        x: 1,
+        w: 'On a raw scale, 23 and 1 are 22 apart; in reality they are 2 hours apart. The sin/cos pair embeds the circle so cyclic proximity is preserved.',
+        revisit: 69,
+      },
+      {
+        q: 'Which model family is essentially indifferent to feature scaling?',
+        o: [
+          'k-nearest neighbors',
+          'Logistic regression trained by gradient descent',
+          'Decision trees and their ensembles — splits are threshold-based and monotone transforms of a feature do not change them',
+          'Neural networks',
+        ],
+        x: 2,
+        w: 'Trees ask "is x > t?" — rescaling x just moves t. Distance-based (k-NN) and gradient-based (linear, logistic, neural nets) learners are the ones that need scaled inputs.',
+        revisit: 69,
+      },
+    ],
+    resources: [
+      { label: 'scikit-learn — preprocessing data (official user guide)', url: 'https://scikit-learn.org/stable/modules/preprocessing.html', type: 'docs', time: '30 min' },
+      { label: 'scikit-learn User Guide — pipelines & ColumnTransformer', url: 'https://scikit-learn.org/stable/user_guide.html', type: 'docs', time: '20 min' },
+      { label: 'Kaggle Learn — Feature Engineering (interactive)', url: 'https://www.kaggle.com/learn', type: 'course', time: '30 min' },
+      { label: 'Google ML Crash Course — feature engineering modules', url: 'https://developers.google.com/machine-learning/crash-course', type: 'course', time: '20 min' },
+    ],
+    schedule: [
+      { activity: 'Spaced-rep warm-up: Day 68 cards (mechanisms, contracts)', minutes: 10 },
+      { activity: 'ELI5 + tech read: encodings, scaling, the fitting discipline', minutes: 20 },
+      { activity: 'Guided: encode/scale by hand + ColumnTransformer', minutes: 42 },
+      { activity: 'Practice: the leak hunt', minutes: 18 },
+      { activity: 'Project: features.py feature factory', minutes: 20 },
+      { activity: 'Quiz + flashcards', minutes: 10 },
+    ],
+    completion: [
+      'Unseen-category behavior and the ordinal-encoding fiction both demonstrated',
+      'ColumnTransformer built; feature names printed and every column explainable',
+      'Leak hunt: all three setups classified correctly with severity ranking',
+      'features.py committed with documentation and the EXCLUDED section; quiz ≥ 2/3',
+    ],
+    connections: {
+      back: 'The features stand on Day 68\'s cleaned data (the was_missing flag survives as signal); log1p-before-scaling is Day 58\'s tails; vectorized sin/cos columns are Day 64\'s broadcasting; and the excluded refund_issued is Day 67\'s leak, formally banished.',
+      forward: 'Day 71 feeds this exact matrix into sklearn models — your first fit/predict runs on today\'s output. Day 77\'s competition is won with feature work, Day 82 wraps preprocessor+model into one deployable pipeline, and Day 92 reframes features as learned embeddings.',
+    },
+    flashcards: [
+      { f: 'One-hot vs ordinal encoding?', b: 'One-hot: one 0/1 column per category (unordered, low cardinality). Ordinal: single integer — ONLY for true orders.' },
+      { f: 'The transformer fitting rule?', b: 'fit_transform(train), transform(test). Scaler means, encoder categories, imputer medians are parameters — learned from train only.' },
+      { f: 'Which models need scaling, which do not?', b: 'Distance- and gradient-based (k-NN, linear/logistic, neural nets) need it; trees/ensembles are threshold-based and do not.' },
+      { f: 'Cyclical encoding for hour/month?', b: 'sin(2πv/period) and cos(2πv/period) — preserves that 23:00 borders 01:00.' },
+      { f: 'Why is naive target encoding the worst leak?', b: 'It maps averaged TARGET values (including test rows) into a feature — answer-key information, concentrated.' },
+      { f: 'What does ColumnTransformer buy you?', b: 'Per-column-type pipelines in one object with a single fit/transform contract — leak-proofing by construction.' },
+    ],
+    deepDive: [
+      { label: 'Out-of-fold target encoding', note: 'The safe version of the powerful trick: encode each row using target means computed WITHOUT that row\'s fold. Day 77\'s competition is where you may want it; read the idea now so it is not magic then.' },
+    ],
+  },
+  {
+    id: 'd070', day: 70, week: 10, phase: 4, kind: 'review',
+    title: 'Week 10 Checkpoint: EDA Report',
+    analogy: 'The data interview writeup',
+    objectives: [
+      'Recall the week\'s core idioms (NumPy semantics, pandas selection, join audits, cleaning contracts) from memory',
+      'Execute the full pipeline — EDA → cleaning → feature plan — on a dataset you have never touched',
+      'Deliver a stakeholder-readable report with 5 defensible findings in the sentence format',
+      'Self-grade against the rubric and map every gap to a revisit day',
+    ],
+    prereqs: [
+      { day: 64, label: 'NumPy in anger' },
+      { day: 66, label: 'Wrangling & join audits' },
+      { day: 67, label: 'EDA checklist' },
+      { day: 68, label: 'Cleaning & validation' },
+      { day: 69, label: 'Feature engineering' },
+    ],
+    eli5: `A journalist's interview only becomes journalism when the story is written — and written for readers, not for other journalists. Today you take everything Week 10 built and produce the writeup: a fresh dataset you have never seen, interviewed, cleaned, and turned into findings a business person can act on. No new techniques. The test is whether the checklist lives in your hands or only in your notes.
+
+The order of the day mirrors how skill actually consolidates. First, retrieval drills: write the week's idioms from memory — the broadcasting rule, the join audit, the fitting discipline — because fetching them cold is what cements them, and Day 63 proved that re-reading is a placebo. Then the main event: the checkpoint project, done timeboxed like a real engagement. The constraint that makes it professional rather than academic: every finding must be a sentence a skeptic can check, every cleaning decision must be logged and justified, and the feature plan must name what is EXCLUDED and why. That last habit — documenting what you did NOT use — is what separates an analysis someone can trust from a notebook someone must audit.`,
+    why: `This checkpoint is the program's first full FDE-shaped deliverable: ambiguous data in, stakeholder-readable insight out, with the engineering receipts attached. It is the dress rehearsal for Day 77's model card, Day 83's churn project report, and Day 105's non-technical explainer — and the EDA-report format is literally what a customer engagement's first week produces. The retrieval drills matter for a nearer reason: Week 11 starts fitting models tomorrow, and it assumes this week's idioms are reflexes, not references.`,
+    tech: `### The recall targets
+
+Before the project, drill the seven idioms that must be reflexes: (1) the broadcasting rule and the (n,) vs (n,1) trap; (2) view-vs-copy and the axis-that-disappears; (3) loc/iloc and the chained-indexing rule; (4) the join audit trio — counts before/after, validate=, indicator=; (5) sentinel→NaN→strategy ordering; (6) the contract pattern (validate, collect, report); (7) fit-on-train-only. Each drill is closed-book: write it, run it, diff against your notes, card the misses.
+
+### The checkpoint project, specified
+
+Pick a dataset you have NOT worked with: any public tabular dataset you can download as CSV (a city's open-data portal, a Kaggle dataset, seaborn's built-ins) — or, to stay fully offline, the provided seeded generator (an e-commerce sessions table with planted dirt and one planted leak). Fresh data is the point: the muscle being tested is approach, not memory of this week's toy tables.
+
+Deliverable: \`eda_report.md\` for a named stakeholder (e.g. "Head of Support") plus a \`report_code/\` folder that reproduces every number. Required sections: (1) **Data overview** — what it is, grain (what one row means), size, time span; (2) **Quality assessment** — missingness map, sentinels, duplicates, the symptom→cause→repair table with violation counts before/after; (3) **Five findings** — sentence format (claim + number + denominator + comparison), each reproducible by one named script/section, at least one honest negative; (4) **Feature plan** — 8+ candidate features with one-line rationales, the encodings/scalings planned, and an EXCLUDED list with reasons (leaks, post-outcome artifacts, high-cardinality IDs); (5) **Risks & next steps** — what you could not verify, what data you would request.
+
+The grading standard is the professional one: a reader who runs your code gets your numbers; a reader who checks your claims finds the denominators; a reader who knows nothing technical still learns the five things that matter. Timebox hard — 75 minutes of focused execution beats an unfinished masterpiece, and shipping within a timebox is itself part of the FDE skill.`,
+    viz: null,
+    guided: [
+      {
+        title: 'Idiom sprint — the week from memory',
+        minutes: 20,
+        body: `1. Closed book, blank file. Write and RUN, from memory, one minimal working example of each: (a) center a (100, 3) array's columns via broadcasting; (b) demonstrate a slice-view mutation and its .copy() fix; (c) a boolean-mask filter with two ANDed conditions in pandas; (d) a correct .loc write that chained indexing would have botched; (e) a merge with validate="m:1" and indicator=True on two 5-row toy frames; (f) a groupby with named aggregation; (g) fit a StandardScaler on train and transform test.
+2. Diff each against your Week 10 files. Green / yellow / red as on Day 63.
+3. For every yellow/red: write a flashcard AND say aloud the production consequence of getting it wrong (row explosion double-counts revenue; leaked scaler inflates metrics…). Consequences are the glue.
+4. Time yourself. Under 15 minutes with ≤ 2 yellows is fluent; over 20 means schedule a 30-minute idiom review before Day 71.`,
+      },
+      {
+        title: 'Checklist reconstruction + report skeleton',
+        minutes: 15,
+        body: `1. From memory, write the seven EDA interview stages and the three leakage-interrogation questions. Diff against your Day 67 \`eda_checklist.md\` — card any stage you dropped.
+2. From memory, write the cleaning pipeline's five commandments (raw is read-only; script everything; log counts; contract at the end; mechanism before method). Diff against Day 68's report.
+3. Now set up the checkpoint: create \`eda_report.md\` with the five required section headers and a named stakeholder, and \`report_code/\` with an empty \`run_all.py\`. Choose your dataset (public CSV or the seeded generator) and write ONE sentence: what decision could this data inform, and for whom? That sentence is your report's north star — every finding must serve it.`,
+      },
+    ],
+    practice: [
+      {
+        title: 'Pre-flight: interrogate the fresh dataset',
+        minutes: 15,
+        body: `Before the full build, run the 15-minute reconnaissance you would do in a customer's conference room: load the fresh dataset, run the identity and gaps passes (shape, dtypes, head, isna map, value_counts on key columns), and write down — in exactly three bullets — the three biggest risks you can already see (a suspicious column, a skew, a missingness pattern, a possible unit issue, a candidate leak).
+
+Constraints: 15 minutes, no cleaning yet, no plots beyond two quick histograms. The skill being drilled is triage — deciding where the report's effort should go BEFORE spending it. If you chose the seeded generator, expect to find at least one planted issue in this pass; if you chose a public dataset, whatever you find is real, which is better.
+
+Hints: grain first ("what does one row mean?") — misunderstanding grain invalidates every later number; then the columns a stakeholder would ask about first.`,
+      },
+    ],
+    project: {
+      title: 'The Week 10 checkpoint: a stakeholder-ready EDA report',
+      brief: `Execute the full pipeline on your fresh dataset in a hard 75-minute timebox: EDA per your checklist, cleaning with logged repairs and a validation before/after count, and the feature plan with encodings and exclusions — delivered as \`eda_report.md\` + \`report_code/run_all.py\` (which reproduces every number in the report from the raw file in one command). If you use the offline option, generate it with: \`rng = np.random.default_rng(seed=70)\` — 2,000 e-commerce sessions with columns [session_id, ts (string dates), device, pages_viewed, duration_min (log-normal), revenue (zero-inflated), converted], then plant: 3% "unknown" devices, 25 duplicate sessions, revenue in cents for device=="mobile", and a \`discount_applied_at_checkout\` column generated FROM converted (the leak). Commit everything, then self-grade against the rubric and write your gap map (miss → revisit day).`,
+      rubric: [
+        'run_all.py reproduces every number in the report from raw data in one command',
+        'Quality section has the symptom→cause→repair table and validation counts before/after cleaning',
+        'Five findings in sentence format, each with number + denominator + comparison, including one honest negative',
+        'The planted (or discovered) leak is identified and sits in the EXCLUDED list with the interrogation reasoning',
+        'Feature plan names 8+ features with rationales and correct encoding/scaling choices',
+        'Report readable by a non-technical stakeholder: no unexplained jargon, findings ranked by decision-relevance',
+      ],
+    },
+    mistakes: [
+      'Skipping the recall drills to "save time for the project". The drills are why next week\'s modeling flows; the project alone only exercises what you already retrieve easily.',
+      'Choosing a dataset you already know. Familiarity hides the very gaps this checkpoint exists to expose — fresh data or the provided generator, no exceptions.',
+      'Blowing the timebox on plot polish. Stakeholders act on ranked sentences with numbers; a report that is 80% done everywhere beats one perfect histogram.',
+      'Reporting findings without denominators or with precision the n cannot support — "conversion is 3.847%" from 400 sessions is Day 60 amnesia.',
+      'Cleaning interactively and reporting numbers your run_all.py cannot reproduce. If the script and the report disagree, the report is fiction.',
+      'Writing the feature plan without an EXCLUDED section. What you left out (and why) is half the evidence that you can be trusted with the modeling next week.',
+    ],
+    quiz: [
+      {
+        q: 'You merge sessions (2,000 rows) with a device-metadata table and end with 2,041 rows. Which single keyword would have turned this silent bug into a loud error?',
+        o: [
+          'indicator=True',
+          'how="inner"',
+          'validate="m:1" — it raises when the right table\'s keys are not unique',
+          'sort=True',
+        ],
+        x: 2,
+        w: 'Row growth on an m:1-intended merge means duplicate keys on the right — validate="m:1" makes pandas raise immediately. indicator shows match categories but does not stop the explosion. If missed, revisit Day 66.',
+        revisit: 66,
+      },
+      {
+        q: 'A column in the fresh dataset predicts the target almost perfectly. Per this week\'s discipline, it belongs…',
+        o: [
+          'At the top of the feature plan — strongest signal wins',
+          'In the EXCLUDED list pending interrogation: when is the value created, could it exist at prediction time, does it survive a time-ordered split?',
+          'In the report\'s headline finding as a success',
+          'Nowhere — delete the column silently',
+        ],
+        x: 1,
+        w: 'Too-clean separation is a provenance question. The three interrogation questions (Day 67) decide leak vs legitimate; until they pass, the column is excluded and documented — never silently deleted, never blindly used.',
+        revisit: 67,
+      },
+      {
+        q: 'Your report says "mobile revenue looks 100× higher than desktop". Before publishing this as a finding, this week says to first suspect…',
+        o: [
+          'Mobile users genuinely spend 100× more',
+          'A unit mix-up (cents vs dollars) split by source/device — check for the two-hump log-histogram, fix per source, and re-assert medians agree',
+          'An outlier to cap',
+          'A correlation-causation problem',
+        ],
+        x: 1,
+        w: 'A clean constant multiplicative gap aligned with a system boundary is Day 68\'s unit-bug signature — and it is one of the planted issues in the offline dataset. 100× real behavior differences are vanishingly rare; unit bugs are Tuesday.',
+        revisit: 68,
+      },
+    ],
+    resources: [
+      { label: 'pandas User Guide (reference while building)', url: 'https://pandas.pydata.org/docs/user_guide/index.html', type: 'docs', time: '15 min' },
+      { label: 'Google Technical Writing — writing for non-specialist readers', url: 'https://developers.google.com/tech-writing', type: 'course', time: '25 min' },
+      { label: 'Kaggle Learn — Pandas & Data Cleaning (targeted review of weak spots)', url: 'https://www.kaggle.com/learn', type: 'course', time: '20 min' },
+    ],
+    schedule: [
+      { activity: 'Spaced-rep warm-up: full Week 10 due deck', minutes: 10 },
+      { activity: 'Guided: idiom sprint + checklist reconstruction', minutes: 35 },
+      { activity: 'Practice: 15-minute reconnaissance of the fresh dataset', minutes: 15 },
+      { activity: 'Project: the EDA report, hard 75-minute equivalent (build core in 50)', minutes: 50 },
+      { activity: 'Quiz + self-grade against rubric + gap map', minutes: 10 },
+    ],
+    completion: [
+      'Idiom sprint completed with ≤ 2 yellows (or the review session scheduled)',
+      'eda_report.md shipped with all five sections and five sentence-format findings',
+      'run_all.py reproduces the report\'s numbers from raw data in one command',
+      'Self-grade done: rubric score recorded, every gap mapped to a revisit day',
+    ],
+    connections: {
+      back: 'Everything here is this week compressed: Day 64\'s arrays under Day 65–66\'s pandas, Day 67\'s interview, Day 68\'s contracts, Day 69\'s feature plan. The report-writing bar comes from Day 63\'s "no claim without an interval" standard.',
+      forward: 'Tomorrow (Day 71) the feature matrix you planned meets its first model — sklearn fit/predict on exactly this kind of prepared data. Day 77\'s model card and Day 83\'s churn report are this document plus a model; Day 105 and Day 168 push the stakeholder-writing muscle further.',
+    },
+    flashcards: [
+      { f: 'The five sections of an EDA report?', b: 'Data overview (with grain), quality assessment, five findings, feature plan (with EXCLUDED), risks & next steps.' },
+      { f: 'What makes a finding "defensible"?', b: 'Claim + number + denominator + comparison, reproducible by a named script. Precision matched to n.' },
+      { f: 'Why does the report need an EXCLUDED list?', b: 'What you left out (leaks, IDs, post-outcome columns) and why is the evidence you can be trusted with modeling.' },
+      { f: 'First question about any new table?', b: 'The grain: what does one row mean? Misread grain invalidates every downstream number.' },
+      { f: 'The reproducibility bar for a data report?', b: 'One command from raw file to every published number. Report ≠ script output → the report is fiction.' },
+      { f: 'Why timebox the checkpoint?', b: 'Shipping a complete-enough analysis on deadline is the FDE skill; polish is the enemy of shipped.' },
+    ],
+    deepDive: [
+      { label: 'Read a real Kaggle EDA notebook critically', url: 'https://www.kaggle.com/learn', note: 'Find a highly-voted EDA notebook for any dataset and grade it against your rubric: where are the denominators? The excluded features? The honest negatives? Critiquing others\' EDA is the fastest way to sharpen your own.' },
+    ],
+  },
 ];

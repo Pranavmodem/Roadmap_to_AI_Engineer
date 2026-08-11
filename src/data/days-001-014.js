@@ -2915,5 +2915,162 @@ Hints (only if stuck): phone numbers — alternation of two explicit shapes beat
       { label: 'Catastrophic backtracking', note: 'Patterns like (a+)+$ on a long non-matching string can run for centuries — ambiguous nesting makes the engine try exponential paths. This is a real DoS class (ReDoS). The fix is the habit you learned today: specific classes over stacked greedy quantifiers.' },
     ],
   },
+  {
+    id: 'd014', day: 14, week: 2, phase: 1, kind: 'review',
+    title: 'Week 2 Checkpoint: Log Analyzer',
+    analogy: 'Second checkpoint',
+    objectives: [
+      'Recall Week 2 material from memory: git, classes, dataclasses, generators, decorators, regex',
+      'Rebuild the week\'s core patterns on a blank page and diff against reality',
+      'Build an object-oriented, streaming log analyzer from a spec, reusing Day 13\'s parser',
+      'Ship it with a clean, story-telling git history',
+    ],
+    prereqs: [
+      { day: 8, label: 'Git (clean history is graded)' },
+      { day: 10, label: 'Dataclasses and composition' },
+      { day: 11, label: 'Generator pipelines' },
+      { day: 13, label: 'logparse.py (today\'s engine)' },
+    ],
+    eli5: `Second checkpoint on the trail — and this one has a twist. At the first checkpoint you repacked the bag you'd been carrying for a week. This week you didn't just collect more gear; you built *machines*: a time machine (git), blueprints (classes), conveyor belts (generators), gift-wrap (decorators), and a sketch-artist's eye (regex). Machines rust differently than facts. You don't check a machine by reciting its manual — you check it by *running it on a real job* and seeing what grinds.
 
+So today's checkpoint is a real job: a server has been writing a log for weeks — thousands of lines, most routine, some alarming, some junk. Your task is the analyst's: stream through it without loading it whole (belts), parse each line into structured objects (blueprints + the sketch artist), and produce the report a human actually wants — which errors dominate? which IPs are hammering us? — with a commit history that tells the story of how you built it (time machine). Every machine from the week, one assembly. First, though: flashcards and a blank page. Recall before reference — the checkpoint rule, forever.`,
+    why: `This project is a rite of passage because it's REAL — "analyze this log and tell me what's wrong" is a task you will do professionally dozens of times, including under incident pressure with a customer watching (Day 172). It's also the week's material proving it composes: classes holding parsed data, generators keeping memory flat, regex doing extraction, git making the work reviewable. That composition is what interviews probe with take-home projects, and what Day 21 will formalize into a shipped, tested package. The recall drills matter just as much: Week 2's abstractions (closures, protocols) decay fastest without retrieval.`,
+    tech: `### Review protocol (first 45 minutes, before any building)
+
+Same order as Day 7, sharpened. (1) **Deck drill**: all due cards, Weeks 1–2, answered aloud, misses re-piled and re-drilled; try to beat your Day 7 miss count — it's in your journal. (2) **Blank-page protocol**, five prompts from memory in a fresh recall2.py: a dataclass with a default_factory field; a generator function and the rule for when its body runs; the three-layer @timed decorator with wraps; a compiled named-group pattern for "LEVEL: message" lines; and the git command sequence from edit to committed (with the two diff variants). (3) Diff against your week's files; harvest FORGOT lines into the journal. (4) Cumulative quiz — every miss maps to a revisit day; schedule them.
+
+### The analyzer spec
+
+Build in \`week-02/analyzer/\` as a small composed system (Day 10's Lego, not one blob):
+
+- **LogEntry** — a dataclass: date, time, level, ip, message. Built via \`LogEntry(**d)\` from Day 13's parse dicts.
+- **LogReader** — wraps a path; its \`entries()\` method is a generator: streams lines (Day 11's read pattern), feeds them through \`logparse.parse_lines\`, yields LogEntry objects, and tracks a junk-line count. No list of all entries may ever exist.
+- **Report** — consumes an entry stream once and accumulates: counts by level, top-5 error messages, top-5 IPs overall, plus the junk count. Render as aligned text via a \`render()\` method (f-string width specs like {n:>5} are worth two minutes of docs).
+- **analyzer.py** — the CLI face: takes the log path as a command-line argument (sys.argv[1] is fine today; argparse arrives Day 16), wires reader into report, prints. Wrap the run with your @timed from wrappers.py.
+
+Test data: regenerate app.log at 200k+ lines with Day 6's generator script, and hand-append a few junk lines. **Git discipline is graded**: build in 4–6 commits that tell the story — scaffold, LogEntry + reader, report, CLI + polish — each message passing the "if applied…" test. A reviewer reading \`git log --oneline\` should follow your reasoning without opening a single diff.`,
+    viz: null,
+    guided: [
+      {
+        title: 'Deck drill + blank-page protocol',
+        minutes: 25,
+        body: `1. Flashcards first: every due card from Weeks 1–2, answered aloud before flipping. Two piles, honest hesitation counts as a miss. Re-drill the miss pile twice. Record the count next to Day 7\'s in journal.md — the trend is the point.
+2. Blank page: close everything. In recall2.py write from memory the five prompts from the tech section. Run what's runnable; let errors teach.
+3. Diff against your real files from the week. Every discrepancy becomes a # FORGOT line; copy them to the journal. Common finds: forgotten functools.wraps, missing default_factory, the r-prefix on patterns, diff vs diff --staged.
+4. For your two worst FORGOT items, write the pattern out correctly one extra time, by hand.
+5. Time-box the whole drill to 25 minutes — imperfect recall harvested beats perfect notes reread.`,
+      },
+      {
+        title: 'Warm up the machines — parser smoke test',
+        minutes: 10,
+        body: `1. Regenerate the big log: bump make_log.py to 200_000 lines and run it. Append 3 junk lines by hand (echo "not a log line" >> app.log — Day 6 reps).
+2. Smoke-test yesterday's engine before building on it: python logparse.py should run its demo — first five parsed dicts plus the junk count. If anything fails, fix logparse.py FIRST and commit the fix separately ("Fix logparse junk handling for empty lines" or similar).
+3. In the REPL, time one full streaming pass: import your parser, run sum(1 for _ in parse_lines(open("app.log", encoding="utf-8"))) — note the seconds and the fact that memory stayed flat.
+4. Sketch the analyzer's three components on paper with arrows: path -> LogReader.entries() -> Report.consume() -> render(). Thirty seconds of diagram saves thirty minutes of tangle — a habit that scales all the way to Day 165's architecture docs.`,
+      },
+    ],
+    practice: [
+      {
+        title: 'Git story check',
+        minutes: 10,
+        body: `Before starting the project, rehearse the history you intend to write. In your journal, draft the 4–6 commit messages you EXPECT to make for the analyzer, in order, each finishing "if applied, this commit will…". Then, as you build, hold yourself to committing at those seams (adjusting is fine; the plan is the practice).
+
+After the build: run git log --oneline and compare against the plan. Score yourself: did any commit mix two stories? Would a stranger follow the sequence? Fix nothing retroactively today — just observe and note one improvement for Day 21\'s shipped project.
+
+Hints: the natural seams are the component boundaries — that\'s not a coincidence; commits and components both follow "one responsibility".`,
+      },
+    ],
+    project: {
+      title: 'The log analyzer',
+      brief: `Build the analyzer exactly to the tech-section spec: LogEntry dataclass, streaming LogReader composed around Day 13\'s parse_lines, an accumulate-once Report with counts by level, top-5 error messages, top-5 IPs, junk count, and an aligned-text render; CLI entry taking the log path, run wrapped in @timed; verified on a 200k-line log with hand-planted junk. Then the analyst's minute: read your own report and write three sentences in journal.md answering "what would I tell the team?" (which error dominates, which IP looks suspicious, what you'd investigate next). The tool is the deliverable; the reading of it is the job. Commit history per the plan — it is graded as part of the project.`,
+      rubric: [
+        'Processes 200k+ lines in one streaming pass — no list of all entries anywhere (grep for readlines/list( to self-audit)',
+        'LogEntry is a dataclass built from parse dicts; Report consumes the stream exactly once',
+        'Report shows counts by level, top-5 error messages, top-5 IPs, and the junk count, with aligned columns',
+        'Junk lines counted and reported, never crashing the run',
+        'git log --oneline reads as a 4–6 commit story matching component seams',
+        'The three-sentence analyst\'s summary is written and specific (names the top error and IP)',
+      ],
+    },
+    mistakes: [
+      'Building first, reviewing later ("the project is the review"). The recall drills are the review; the project is the integration test. Skip the drills and Week 2\'s abstractions quietly rot until Day 21 exposes it.',
+      'Materializing the stream for convenience (entries = list(reader.entries()) "just to check the length"). One reflex list() and constant memory is gone. Count as you consume.',
+      'Consuming the generator twice — once for levels, once for IPs — and getting empty second results (Day 11\'s exhaustion rule). One pass, all accumulators updated together.',
+      'Re-compiling the regex per line, or worse, re-writing the pattern inline instead of importing logparse.py. You built the engine yesterday precisely so today composes it.',
+      'One giant analyze() function instead of Reader/Report components. It works — and it\'s unreviewable, untestable (Day 18 will want components), and un-commit-able at clean seams.',
+      'Commit messages written after the fact as "add analyzer stuff". You drafted the story in advance; the history should read like it.',
+    ],
+    quiz: [
+      {
+        q: 'Report needs level counts AND top IPs from reader.entries(). Correct structure?',
+        o: [
+          'Loop the generator twice, once per statistic',
+          'One loop updating both accumulators per entry — generators are single-pass',
+          'Convert to a list and loop that twice',
+          'Open the file twice inside Report',
+        ],
+        x: 1,
+        w: 'A generator exhausts after one pass — the second loop would silently see nothing (Day 11). Streaming design means one pass feeding every accumulator; a list would work but abandons constant memory.',
+        revisit: 11,
+      },
+      {
+        q: 'LogEntry(**d) where d = {"date": ..., "time": ..., "level": ..., "ip": ..., "message": ...} does what?',
+        o: [
+          'Passes the dict as one positional argument',
+          'Unpacks the dict into keyword arguments matching the dataclass fields',
+          'Creates a dict subclass',
+          'Fails — dataclasses only take positional arguments',
+        ],
+        x: 1,
+        w: 'The ** operator unpacks a dict into keyword arguments (Day 3\'s **kwargs, from the calling side) — the standard bridge from parsed dicts to typed objects.',
+        revisit: 10,
+      },
+      {
+        q: 'Your word-boundary pattern works in the REPL but never matches when moved into the script as "\\berror\\b" (no r prefix). Why?',
+        o: [
+          'Word boundaries only work in the REPL',
+          'Without the r prefix, \\b is a backspace character, not a boundary assertion',
+          'The pattern needs re.MULTILINE',
+          'findall doesn\'t support \\b',
+        ],
+        x: 1,
+        w: 'Python\'s string rules eat the backslash before the regex engine sees it: "\\b" is backspace. Raw strings (r"...") exist for exactly this — the Day 13 rule with no exceptions.',
+        revisit: 13,
+      },
+    ],
+    resources: [
+      { label: 'Python Regex HOWTO (revisit the sections your FORGOT list names)', url: 'https://docs.python.org/3/howto/regex.html', type: 'docs', time: '15 min' },
+      { label: 'itertools recipes (see how the pros compose streams)', url: 'https://docs.python.org/3/library/itertools.html#itertools-recipes', type: 'docs', time: '15 min' },
+      { label: 'Pro Git — 2.2 (if your history discipline slipped this week)', url: 'https://git-scm.com/book/en/v2/Git-Basics-Recording-Changes-to-the-Repository', type: 'book', time: '15 min' },
+    ],
+    schedule: [
+      { activity: 'Deck drill: Weeks 1–2 cards, misses re-drilled, count recorded', minutes: 15 },
+      { activity: 'Blank-page protocol: five prompts + diff + FORGOT harvest', minutes: 10 },
+      { activity: 'Warm-up: regenerate log, smoke-test parser, sketch components', minutes: 10 },
+      { activity: 'Git story check: draft the commit plan', minutes: 10 },
+      { activity: 'Project: build the analyzer to spec', minutes: 55 },
+      { activity: 'Cumulative quiz + analyst\'s summary + revisit scheduling', minutes: 15 },
+    ],
+    completion: [
+      'Flashcard miss count recorded and compared to Day 7',
+      'recall2.py written blind; FORGOT lines harvested to journal',
+      'Analyzer passes all six rubric checks on the 200k-line log',
+      'History matches the drafted commit plan (or the deviation is explained in journal)',
+      'Quiz ≥ 2/3 with revisit days scheduled for any miss',
+    ],
+    connections: {
+      back: 'One build, five machines: Day 8\'s git telling the story, Day 10\'s dataclass-and-composition structure, Day 11\'s single-pass streaming, Day 12\'s @timed on the run, Day 13\'s parser imported whole. Even the log came from Day 6\'s workshop.',
+      forward: 'Week 3 turns this artifact professional: Day 15 refactors it with types and clean-code rules, Day 16 gives it real logging and argparse, Day 18–19 test it, and Day 21 ships it as an installable package on GitHub — the analyzer is your portfolio seed. The streaming-parse-report shape returns at scale in Day 143\'s log mining.',
+    },
+    flashcards: [
+      { f: 'Why one pass over a generator with multiple accumulators?', b: 'Generators exhaust; a second loop sees nothing. Update all statistics in the single pass.' },
+      { f: 'LogEntry(**d) — what is ** doing?', b: 'Unpacking a dict into keyword arguments — the parsed-dict-to-object bridge.' },
+      { f: 'The review-day order?', b: 'Recall first (cards aloud, blank page), reference second (diff, FORGOT list), then build. Never reread first.' },
+      { f: 'What makes a commit history "tell a story"?', b: 'Commits at component seams, imperative messages, one responsibility each — reviewable from log --oneline alone.' },
+      { f: 'Top-5 from a counts dict?', b: 'sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:5] — the Day 12 key= idiom.' },
+    ],
+    deepDive: [
+      { label: 'collections.Counter — the accumulator you hand-rolled', note: 'Counter(seq).most_common(5) replaces your counts-dict-plus-sorted dance. You built it by hand first on purpose; from Day 15 onward, use the stdlib version and enjoy knowing what\'s inside.' },
+    ],
+  },
 ];

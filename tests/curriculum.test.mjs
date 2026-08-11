@@ -97,9 +97,12 @@ test("prerequisites always point backward and exist", async () => {
 test("visualizer keys referenced by days exist in the viz registry", async () => {
   const days = await loadAll();
   const { VIZ } = await import("../src/data/visualizers.js");
+  const { VIZ2 } = await import("../src/data/visualizers-2.js");
+  const { VIZ3 } = await import("../src/data/visualizers-3.js");
+  const all = { ...VIZ, ...VIZ2, ...VIZ3 };
   const missing = [];
   for (const d of days) {
-    if (d.viz && !VIZ[d.viz]) missing.push(`${d.id}:${d.viz}`);
+    if (d.viz && !all[d.viz]) missing.push(`${d.id}:${d.viz}`);
   }
   // viz coverage is allowed to be partial, but referenced keys must resolve
   assert.deepEqual(missing, [], `days reference missing viz keys: ${missing.join(", ")}`);

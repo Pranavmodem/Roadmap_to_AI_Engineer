@@ -2526,4 +2526,397 @@ Hints: for (1) the loop compares the two current heads, links the smaller to the
       { label: 'Reverse a linked list recursively', note: 'A perfect bridge to tomorrow: the recursive reversal is 5 lines, and understanding where the "work" happens (after the recursive call returns) previews the call-stack thinking Day 27 makes explicit.' },
     ],
   },
+  {
+    id: 'd027', day: 27, week: 4, phase: 2, kind: 'lesson',
+    title: 'Recursion & Divide/Conquer',
+    analogy: 'Russian dolls',
+    objectives: [
+      'Write recursive functions with an explicit base case and a shrinking recursive case',
+      'Trace a recursive call on the call stack and predict its maximum depth',
+      'Draw the call tree of naive fib and explain why memoization collapses it to O(n)',
+      'Describe the divide-and-conquer shape (split, solve halves, combine) using merge sort',
+      'Convert a recursion to iteration with an explicit stack, and say when you must',
+    ],
+    prereqs: [
+      { day: 3, label: 'Functions & scope' },
+      { day: 12, label: 'Decorators & lru_cache' },
+      { day: 25, label: 'Stacks — the call stack\'s structure' },
+    ],
+    eli5: `A set of Russian dolls, and your job is to count them. The honest method: open the outermost doll, and inside you find… a slightly smaller version of THE EXACT SAME PROBLEM. So you apply the same move again. Eventually you reach the tiny solid doll that doesn't open — you don't recurse on it, you just say "one." That solid doll is the **base case**, and without it you'd be trying to open dolls forever. Then the answers reassemble on the way OUT: the innermost answer is 1, the next doll says "1 + what was inside me = 2," and so on outward until the outermost doll announces the total.
+
+That's recursion: a function that calls itself on a *smaller* version of its problem, plus a smallest case solved directly. The half-opened dolls sitting on the table while you work inward? That's the **call stack** — Day 25's tray pile, holding every paused caller until its inner answer comes back. Stack too many dolls (no base case, or input too deep) and the table overflows — literally a *stack overflow*. **Divide and conquer** is the power move: instead of opening one doll at a time, split the problem in HALF, solve both halves the same way, and combine — halving is why these algorithms end up O(n log n) instead of O(n²).`,
+    why: `Recursion is the native language of nested data, and your career is full of nested data: directory trees, JSON documents from every API (Day 41), abstract syntax trees, org charts — and next week's binary trees (Day 29) and graphs (Day 31) are traversed almost entirely by recursion. Merge sort's divide-and-conquer shape explains WHY sorting is O(n log n) (Day 32), and memoization is dynamic programming's front door (Day 34). Interviewers use recursion as a lens: a candidate who states the base case, the shrinking step, and the stack depth is demonstrating structured thinking, not syntax.`,
+    tech: `### The two-part contract
+
+Every correct recursion answers two questions: *what is the smallest input I solve directly?* (base case) and *how does each call shrink the problem toward it?* (recursive case). Miss the first and you get infinite descent; fail the second (recursing on an unshrunken input) and same result. Python enforces a recursion limit (~1000 frames) and raises \`RecursionError\` — a safety rail, not a bug in Python. Each active call occupies a **stack frame** holding its locals; depth = memory. Linear recursion on a million items will blow the stack; a loop won't. That is the conversion rule: recursion whose structure is a simple chain (factorial, list traversal) converts mechanically to a loop; recursion over branching structures converts to a loop + an explicit stack of pending work — Day 25's structure standing in for the call stack, with no depth limit but the heap.
+
+### The call tree, and why naive fib is a scandal
+
+\`fib(n) = fib(n-1) + fib(n-2)\` produces a call TREE, not a chain: fib(5) calls fib(4) and fib(3); fib(4) calls fib(3) *again*… The tree has ~2ⁿ nodes, recomputing the same subproblems exponentially many times. **Memoization** — caching results by argument — collapses it: each distinct input computed once, O(n) total. You already own the tool: Day 12's \`@functools.lru_cache\`. The insight to keep: exponential blowup from *overlapping subproblems* + a cache = linear. That sentence is Day 34's dynamic programming in embryo.
+
+### Divide and conquer
+
+The shape: **split** the input in half, **recurse** on both halves, **combine** the sub-answers. Merge sort is the archetype:
+
+~~~python
+def merge_sort(nums):
+    if len(nums) <= 1:              # base case
+        return nums
+    mid = len(nums) // 2
+    left = merge_sort(nums[:mid])   # solve halves
+    right = merge_sort(nums[mid:])
+    return merge(left, right)       # combine: O(n) two-pointer merge
+~~~
+
+The accounting (Day 22 meets Day 27): halving gives log n levels; each level does O(n) combine work; total O(n log n). The \`merge\` step is literally Day 24's two pointers and Day 26's merge — the toolkit composing. Divide and conquer wins when the combine step is cheap relative to the split's savings; binary search (Day 33) is the degenerate case where one half is *discarded* entirely — O(log n).`,
+    viz: 'call-stack',
+    guided: [
+      {
+        title: 'Watch the stack breathe',
+        minutes: 20,
+        body: `1. In \`recursion_lab.py\`, write \`countdown(n)\` (print n, recurse on n−1, base case n == 0 prints "liftoff") — then add the depth-printing version from the starter that indents by call depth. Run \`countdown(5)\` and watch the descent and return visually.
+2. Write naive \`fib(n)\` with a global call counter. Run fib(10), fib(20), fib(25) and record the call counts — watch the explosion (fib(25) makes ~240k calls).
+3. Add \`@functools.lru_cache\` above fib, reset the counter, rerun fib(25) — count the calls now (should be ≤ 49: each input once, plus lookups). Write the one-sentence explanation in a comment.
+4. Trigger the safety rail on purpose: call \`countdown(20_000)\` and read the RecursionError. Then state in a comment which conversion (plain loop) fixes it and why the loop has no such limit.`,
+        code: `import functools
+
+def countdown(n: int, depth: int = 0) -> None:
+    print("  " * depth + f"countdown({n})")
+    if n == 0:                      # base case: the solid doll
+        print("  " * depth + "liftoff")
+        return
+    countdown(n - 1, depth + 1)     # shrinking step
+    print("  " * depth + f"returning from countdown({n})")
+
+calls = 0
+def fib(n: int) -> int:
+    global calls
+    calls += 1
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+for n in [10, 20, 25]:
+    calls = 0
+    result = fib(n)
+    print(f"fib({n}) = {result}  ({calls} calls)")
+
+@functools.lru_cache(maxsize=None)
+def fib_memo(n: int) -> int:
+    if n <= 1:
+        return n
+    return fib_memo(n - 1) + fib_memo(n - 2)
+
+print(f"fib_memo(80) = {fib_memo(80)}  (instant)")`,
+      },
+      {
+        title: 'Recurse over real nested data + merge sort',
+        minutes: 20,
+        body: `1. Write \`total_size(data)\`: given arbitrarily nested lists of ints (e.g. [1, [2, [3, 4]], 5]), return the sum of all ints. Base case: an int. Recursive case: a list — sum the recursion over its elements. This is the JSON-walking shape you will use forever.
+2. Write \`merge_sort\` from the tech section, plus the \`merge(left, right)\` combine using Day 24's two-pointer walk. Test against Python's sorted() on 100 random lists (starter shows the harness).
+3. In a comment, do the Day 22 accounting: levels × work-per-level = O(n log n). Then answer: what is merge sort's space complexity, and where does it go?
+4. Convert countdown to iteration two ways: a plain loop, and — overkill here but the general tool — an explicit stack of pending values (Day 25). The second version is the template for iterative tree traversal on Day 29.`,
+        code: `import random
+
+def total_size(data) -> int:
+    if isinstance(data, int):           # base case
+        return data
+    return sum(total_size(item) for item in data)   # recurse over the nesting
+
+def merge(left: list, right: list) -> list:
+    out, i, j = [], 0, 0
+    while i < len(left) and j < len(right):   # Day 24: two pointers
+        if left[i] <= right[j]:
+            out.append(left[i]); i += 1
+        else:
+            out.append(right[j]); j += 1
+    out.extend(left[i:]); out.extend(right[j:])
+    return out
+
+def merge_sort(nums: list) -> list:
+    if len(nums) <= 1:
+        return nums
+    mid = len(nums) // 2
+    return merge(merge_sort(nums[:mid]), merge_sort(nums[mid:]))
+
+assert total_size([1, [2, [3, 4]], 5]) == 15
+assert total_size([]) == 0
+for _ in range(100):
+    nums = [random.randint(-99, 99) for _ in range(random.randint(0, 50))]
+    assert merge_sort(nums) == sorted(nums)
+print("nested sum + merge sort: all asserts pass")`,
+      },
+    ],
+    practice: [
+      {
+        title: 'Two solo',
+        minutes: 20,
+        body: `(1) **Fast exponentiation**: pow_fast(x, n) for non-negative n in O(log n) multiplications. The divide: x^n = (x^(n/2))² when n is even; odd n peels one factor. Verify against x ** n and count the multiplications for n = 1000 (should be ~15, not 1000).
+
+(2) **Flatten**: flatten(data) returning a flat list from arbitrarily nested lists — the total_size shape but building a list. Then state: what does the call stack's maximum depth depend on for this function (hint: nesting depth, not total length)?
+
+Hints: for (1), recurse on n // 2 ONCE and square the result — recursing twice rebuilds the fib explosion you just escaped.`,
+      },
+    ],
+    project: {
+      title: 'Pattern log: the recursion section',
+      brief: `Add "Recursion & Divide/Conquer" to \`patterns.md\`: the two-part contract (base case + shrinking step) as the checklist you run on every recursive function; your solved problems (nested sum, merge sort, fast pow, flatten) with one-line notes; the fib call-count table (naive vs memoized — real numbers from your run); recognition cues ("nested", "defined in terms of itself", "sorted halves", "same problem, smaller"); and honest costs (stack depth = memory, ~1000-frame limit, when to convert to iteration + explicit stack). Close with the bridge sentence to Day 34, written in your own words: overlapping subproblems + cache = dynamic programming. Commit — Week 4's toolkit is now complete for tomorrow's drill.`,
+      rubric: [
+        'Section committed with all four problems runnable in the repo',
+        'fib table shows measured call counts, naive vs memoized, for at least three n values',
+        'Merge-sort accounting (log n levels × O(n) merge = O(n log n)) written correctly',
+        'Recursion-to-iteration conversion rule stated with the explicit-stack template included',
+        'pow_fast verified O(log n) by multiplication count, not vibes',
+      ],
+    },
+    mistakes: [
+      'Writing the recursive case first and the base case as an afterthought. Write the base case FIRST — it is the answer\'s foundation, and forgetting it is the #1 cause of RecursionError.',
+      'Recursing on an unshrunken input (fib(n) calling fib(n)). The base case only saves you if every call moves toward it — check the shrinking step explicitly.',
+      'Treating RecursionError as "Python is broken." The ~1000-frame limit is a memory safety rail; deep linear recursions should be loops, deep branching ones explicit stacks.',
+      'Recursing twice on the same half in fast exponentiation (return pow_fast(x, n//2) * pow_fast(x, n//2)). That recomputation rebuilds the exponential call tree — bind the result once, then square it.',
+      'Believing memoization is free. lru_cache trades O(n) memory (and hashable-argument requirements) for the speedup — Day 22\'s space column applies.',
+      'Slicing lists in recursive calls without noticing the cost: nums[:mid] copies O(n) per level. Fine for learning merge sort; production versions pass index bounds instead.',
+    ],
+    quiz: [
+      {
+        q: 'Naive recursive fib(40) is astronomically slower than fib(20). The root cause?',
+        o: [
+          'Python\'s recursion limit throttles it',
+          'The call TREE recomputes the same subproblems exponentially many times — ~2ⁿ calls',
+          'Function calls are slow in Python',
+          'Integer overflow',
+        ],
+        x: 1,
+        w: 'fib(n) spawns two subtrees that overlap massively: fib(38) alone is computed twice, fib(37) three times… Memoization computes each input once, collapsing 2ⁿ to n.',
+        revisit: 27,
+      },
+      {
+        q: 'Merge sort is O(n log n). Where do the two factors come from?',
+        o: [
+          'n comparisons times log n swaps',
+          'log n levels of halving, each level doing O(n) total merge work',
+          'It is actually O(n²) on average',
+          'n from sorting, log n from recursion overhead',
+        ],
+        x: 1,
+        w: 'Halving until size 1 takes log n levels; merging all the pieces at any level touches each element once, O(n). Levels × per-level = n log n — the divide-and-conquer accounting.',
+        revisit: 27,
+      },
+      {
+        q: 'A recursion must process a chain of 500,000 linked nodes. In Python you should…',
+        o: [
+          'Raise the recursion limit to a million and proceed',
+          'Convert to iteration (a loop, or a loop + explicit stack) — half a million frames will exhaust the call stack',
+          'Use lru_cache',
+          'Use threads',
+        ],
+        x: 1,
+        w: 'Frame depth is memory; the limit is a safety rail, and raising it that far invites a real crash. Linear recursions convert mechanically to loops; branching ones to a loop + explicit stack.',
+        revisit: 27,
+      },
+    ],
+    resources: [
+      { label: 'OpenDSA — recursion chapter (with visual call traces)', url: 'https://opendsa-server.cs.vt.edu/', type: 'book', time: '25 min' },
+      { label: 'CS50x Week 3 — recursion & merge sort segments', url: 'https://cs50.harvard.edu/x/', type: 'course', time: '30 min' },
+      { label: 'VisuAlgo — sorting visualizer (watch merge sort\'s levels)', url: 'https://visualgo.net/en', type: 'tool', time: '10 min' },
+    ],
+    schedule: [
+      { activity: 'Spaced-rep warm-up: Days 23–26 cards + due deck', minutes: 10 },
+      { activity: 'ELI5 + tech read, watch the call-stack visualizer', minutes: 20 },
+      { activity: 'Guided: stack breathing + nested data + merge sort', minutes: 40 },
+      { activity: 'Practice: fast pow + flatten', minutes: 20 },
+      { activity: 'Project: pattern log recursion section', minutes: 20 },
+      { activity: 'Quiz + flashcards', minutes: 10 },
+    ],
+    completion: [
+      'Call-count explosion measured naive vs memoized and recorded',
+      'merge_sort passes 100 randomized tests against sorted()',
+      'pow_fast verified O(log n) by multiplication count',
+      'patterns.md recursion section committed; quiz ≥ 2/3',
+    ],
+    connections: {
+      back: 'The call stack is Day 25\'s structure run by the interpreter; the merge step is Day 24\'s two pointers on Day 26\'s problem; lru_cache is Day 12\'s decorator finally showing its full power.',
+      forward: 'Trees (Day 29) and graphs (Day 31) are traversed by exactly today\'s shapes. Day 32 builds on merge sort\'s accounting, Day 33 is divide-and-conquer with a discarded half, and Day 34 grows today\'s memoized-fib insight into dynamic programming proper.',
+    },
+    flashcards: [
+      { f: 'The recursion contract?', b: 'A base case solved directly + a recursive case that provably shrinks toward it. Check both, base case first.' },
+      { f: 'Why is naive fib exponential and memoized fib O(n)?', b: 'Overlapping subproblems recomputed ~2ⁿ times; a cache computes each distinct input once.' },
+      { f: 'Merge sort accounting?', b: 'log n halving levels × O(n) merge work per level = O(n log n).' },
+      { f: 'When must recursion become iteration in Python?', b: 'Deep inputs (~1000+ frames): linear → plain loop; branching → loop + explicit stack.' },
+      { f: 'Fast exponentiation trick?', b: 'x^n = (x^(n//2))² (odd n peels one x): recurse ONCE and square — O(log n) multiplications.' },
+      { f: 'RecursionError means…?', b: 'Frame depth hit the safety limit: missing/unreachable base case, or an input too deep for recursion.' },
+    ],
+    deepDive: [
+      { label: 'Why Python has no tail-call optimization', note: 'Some languages reuse the current frame for tail calls, making recursion loop-cheap. Python deliberately refuses (Guido values honest tracebacks). Knowing this explains why the "convert to a loop" rule is Python-specific advice.' },
+    ],
+  },
+  {
+    id: 'd028', day: 28, week: 4, phase: 2, kind: 'review',
+    title: 'Week 4 Checkpoint: Pattern Drill',
+    analogy: 'The toolkit test',
+    objectives: [
+      'Recognize which pattern a fresh problem wants within 60 seconds of reading it',
+      'Solve four problems under time pressure using the think-aloud protocol',
+      'Grade your own solutions against a rubric covering correctness, complexity, and communication',
+      'Start the interview error log — the living artifact you will keep through Day 179',
+    ],
+    prereqs: [
+      { day: 22, label: 'Big O & complexity' },
+      { day: 23, label: 'Arrays & hashing' },
+      { day: 24, label: 'Two pointers & sliding window' },
+      { day: 27, label: 'Recursion & divide/conquer' },
+    ],
+    eli5: `A mechanic's apprenticeship exam is never "name every tool on the wall." It is a car with four hidden faults and a ticking clock. The examiner isn't checking whether you own a torque wrench — they're checking whether, hearing a rattle, your hand moves toward the right drawer *without deliberation*. This week you filled five drawers: hashing, pointers and windows, stacks and queues, linked lists, recursion. Today is the car.
+
+Two things make today different from just "more problems." First, **time pressure**, on purpose: recognition under pressure is a different skill from recognition at leisure, and it only develops under actual pressure. Second, the **error log** — the single highest-leverage habit in interview preparation. Every mistake you make today gets written down in a specific format: what the problem was, what you did, what you should have done, and the *cue you missed*. Champions in every field keep this log. Six months of "I keep missing the shrink-condition in windows" beats a thousand un-reflected practice problems, because the log turns each mistake from a repeated tax into a one-time tuition payment.`,
+    why: `This drill is a dress rehearsal for real coding interviews (Days 35, 84, 179 escalate it), but the deeper skill is professional: pattern recognition under pressure is what an FDE does in a customer meeting when someone describes a slow pipeline and you hear "hidden O(n²), needs a hash map" in real time. The error log habit transfers even further — it is the same log→case→fix loop you'll run on production LLM failures on Day 143. Self-scoring against a rubric also builds the calibration muscle that Day 135's LLM-as-judge work demands: grading honestly is a skill, and it starts on your own work.`,
+    tech: `### Why the drill works: retrieval, interleaved, under pressure
+
+Three findings stack up today. **Retrieval practice**: solving from memory strengthens the pattern representations far more than re-reading patterns.md. **Interleaving**: this week you practiced each pattern in its own blocked session — but real problems arrive unlabeled, so today's set mixes patterns, forcing the *diagnosis* step that blocked practice skips. Diagnosis is the actual interview skill. **Pressure exposure**: mild time stress today inoculates against heavier stress later; the protocol (restate → pattern → plan → code → complexity → test) is your handrail when adrenaline narrows thinking.
+
+### The recognition table you are testing
+
+Condensed from the week — the cue on the left should fire the drawer on the right in under a minute: "count/group/seen before" → hash map or set (23). "Sorted + pair" → closing pincers (24). "Longest/shortest contiguous stretch such that…" → sliding window, likely with a frequency map (24). "Nested/matching/most-recent-first" → stack (25). "In arrival order / level by level" → queue (25). "Next greater/smaller" → monotonic stack (25). "Reverse in place / cycle / middle" → pointer surgery, fast/slow (26). "Same problem, smaller / nested data" → recursion, memoize if subproblems overlap (27). No cue firing? Start with brute force, state its complexity, and let the inefficiency point at the right drawer — "my inner loop is a membership scan" IS the cue.
+
+### The error log format
+
+One entry per miss, four fields: **Problem** (name + one-line statement). **What happened** (wrong pattern? right pattern, buggy code? timeout?). **Root cause** — be specific: "read \'substring\' but didn't register contiguity" not "was dumb". **The cue I'll use next time** — one sentence, future-tense, testable. Keep it in \`error_log.md\` next to patterns.md. Rule: every entry gets re-read at the start of the next drill (Day 35) — the log is a reading list, not a diary.`,
+    viz: null,
+    guided: [
+      {
+        title: 'Warm-up: the 60-second diagnosis drill',
+        minutes: 15,
+        body: `No coding — diagnosis only. For each problem statement below, write: the pattern, the key data structure, and expected complexity. 60 seconds each, timed. Answers at the bottom — score yourself before peeking.
+
+1. Given a string, find the length of the longest substring containing at most two distinct characters.
+2. Given a sorted array and a target, return whether any pair sums to it.
+3. Given a list of temperatures, for each day find how many days until a warmer one.
+4. Given a nested list of ints of arbitrary depth, return the maximum value.
+5. Given an array, return true if any value appears at least twice.
+6. Given a linked list, return the node where a cycle begins (or None).
+7. Given a string of brackets, determine the minimum additions to make it valid.
+8. Given an array, find the k most frequent elements.
+
+Score: 7–8 = drawers are labeled; 5–6 = review the misses\' days tonight; ≤4 = redo the week\'s flashcard decks before the timed drill.`,
+        code: `# Answers (peek only after committing your own):
+# 1 variable sliding window + frequency map — O(n)          (Day 24)
+# 2 closing pincers on sorted data — O(n)                    (Day 24)
+# 3 monotonic stack of indices — O(n)                        (Day 25)
+# 4 recursion over nesting: base=int, recurse=list — O(n)    (Day 27)
+# 5 seen-set — O(n) time, O(n) space                         (Day 23)
+# 6 fast/slow to detect, then two-pointer restart — O(n)     (Day 26)
+# 7 stack (or open/close counters — order is enough here!) — O(n)  (Day 25)
+# 8 frequency map + most_common — O(n log n) or O(n) bucket  (Day 23)`,
+      },
+      {
+        title: 'Set up the error log',
+        minutes: 10,
+        body: `1. Create \`error_log.md\` in your practice repo with the four-field template from the tech section and a header explaining (to future-you) what this file is for.
+2. Seed it with your first entries: any diagnosis you missed in the warm-up gets one, written in full format. If you went 8/8, log the SLOWEST diagnosis instead — hesitation is data too.
+3. Add a standing section at the top called "Cues to re-read before every drill" — it starts empty and accumulates your personal misfire patterns.
+4. Commit. This file gets an entry after every mock interview from now to Day 179 — treat its honesty as sacred: nobody reads it but you, so a flattering error log is a useless one.`,
+      },
+    ],
+    practice: [
+      {
+        title: 'Spaced-rep sweep before the drill',
+        minutes: 15,
+        body: `Run the full Week 4 flashcard deck (Days 22–27, ~30 cards). For every card you fail, do a 60-second active repair: open that day\'s patterns.md section (not the full lesson), re-derive the idea, close it, and answer the card again from memory.
+
+Goal: deck at ≥90% before the timed drill — going in warm is the point of a checkpoint day.
+
+Hints: cards failed twice in a row get written on today\'s error log under "Cues to re-read" — a flashcard you keep failing is a cue you keep missing.`,
+      },
+    ],
+    project: {
+      title: 'The timed drill — four problems, 60 minutes, self-scored',
+      brief: `Simulate the real thing: timer visible, no notes, no patterns.md, think-aloud protocol OUT LOUD for every problem. The set, one per drawer: (1) hashing — given two strings, return all characters that appear in both with the minimum of their two counts; (2) window — longest substring of s containing no character from a given banned set... wait, too easy? then: longest substring with at most k repeats of any single character; (3) stack — evaluate a postfix expression ("3 4 + 2 *" → 14); (4) recursion — given a nested list, return a flat list with all ints doubled. 15 minutes each. Then switch to examiner mode: score each against the rubric below, write error-log entries for everything that went wrong, and commit solutions + updated log. Your score is a baseline, not a verdict — Day 35 measures the delta.`,
+      rubric: [
+        'Each problem: correct on your own test cases including one edge case (empty input at minimum)',
+        'Each problem: pattern named and complexity stated BEFORE coding (the protocol, spoken aloud)',
+        'At least 3 of 4 completed within their 15-minute boxes',
+        'Every failure or overrun has a four-field error-log entry with a specific, testable cue',
+        'Solutions + error_log.md committed; baseline score recorded in your journal for Day 35 comparison',
+      ],
+    },
+    mistakes: [
+      'Skipping the think-aloud protocol when alone. The protocol under pressure is the skill being trained; silent solving trains a different (easier) skill and the gap shows up in real interviews.',
+      'Grading yourself generously. "Almost worked" is a fail with a lesson in it; the error log only compounds if entries are honest. Nobody reads it but you.',
+      'Writing error-log root causes like "careless" or "rushed". Those are moods, not causes. "Did not test the empty input" is a cause — it implies the fix.',
+      'Treating a low baseline as bad news. Day 28 exists to LOCATE the gaps while they are one week old; the score that matters is the Day 35 delta.',
+      'Reviewing by rereading patterns.md instead of re-solving. Recognition returns fast under rereading and vanishes under pressure — only retrieval sticks.',
+      'Skipping the spaced-rep sweep to save time for the drill. Cold-start failure tells you less than warmed-up failure: the sweep separates "never learned" from "can\'t retrieve under pressure".',
+    ],
+    quiz: [
+      {
+        q: 'Problem: "longest contiguous run of days with total rainfall under X." First drawer to open?',
+        o: [
+          'Hash map for counting',
+          'Variable sliding window — grow right, shrink while the sum violates the cap',
+          'Monotonic stack',
+          'Recursion over halves',
+        ],
+        x: 1,
+        w: '"Longest contiguous … such that constraint" is the window signature (Day 24). Window state here is just the running sum.',
+        revisit: 24,
+      },
+      {
+        q: 'Why does today\'s drill MIX patterns instead of drilling one at a time like Days 23–27?',
+        o: [
+          'To make it harder for its own sake',
+          'Blocked practice skips the diagnosis step; interleaved problems arrive unlabeled and force pattern RECOGNITION — the actual interview skill',
+          'To cover more material per hour',
+          'Because the problems are easier when mixed',
+        ],
+        x: 1,
+        w: 'Interleaving is harder and feels worse, which is exactly why it works: it trains "which tool?" — the step blocked practice never exercises.',
+        revisit: 28,
+      },
+      {
+        q: 'The most useful field in an error-log entry is…',
+        o: [
+          'The date',
+          'How you felt about the miss',
+          'The specific, testable cue you\'ll use next time (root cause turned into a future trigger)',
+          'The full correct solution pasted in',
+        ],
+        x: 2,
+        w: 'The log\'s job is changing future behavior. "When I read \'substring\', I will check contiguity before choosing" is executable; feelings and pasted solutions are not.',
+        revisit: 28,
+      },
+    ],
+    resources: [
+      { label: 'NeetCode Roadmap — practice pool for extra drill problems', url: 'https://neetcode.io/roadmap', type: 'course', time: '20 min' },
+      { label: 'Tech Interview Handbook — coding interview best practices (repo)', url: 'https://github.com/yangshun/tech-interview-handbook', type: 'repo', time: '20 min' },
+      { label: 'VisuAlgo — verify any structure you misremembered today', url: 'https://visualgo.net/en', type: 'tool', time: '10 min' },
+    ],
+    schedule: [
+      { activity: 'Guided: 60-second diagnosis drill (timed)', minutes: 15 },
+      { activity: 'Guided: set up error_log.md + seed entries', minutes: 10 },
+      { activity: 'Practice: spaced-rep sweep of the Week 4 deck', minutes: 15 },
+      { activity: 'Project: timed 4-problem drill (15 min each)', minutes: 60 },
+      { activity: 'Self-scoring, error-log entries, commit', minutes: 15 },
+      { activity: 'Quiz + journal baseline note', minutes: 10 },
+    ],
+    completion: [
+      'Diagnosis drill scored; misses logged',
+      'error_log.md created, seeded, and committed with the four-field format',
+      'Timed drill done under real conditions: no notes, protocol aloud, timer visible',
+      'Baseline recorded in journal; quiz ≥ 2/3',
+    ],
+    connections: {
+      back: 'Everything drilled today was built Monday-to-Saturday: Day 22\'s complexity language, Day 23\'s hash patterns, Day 24\'s pointers and windows, Day 25\'s LIFO/FIFO, Day 26\'s pointer surgery, Day 27\'s recursion.',
+      forward: 'Day 35 reruns the drill over trees, graphs, and DP and measures your delta. The error log rides along to every mock (Days 84, 179). Interleaved retrieval under pressure is also exactly how Day 134\'s eval mindset treats an LLM: fixed unlabeled cases, honest scoring, tracked over time.',
+    },
+    flashcards: [
+      { f: 'Why interleave patterns in a drill?', b: 'Real problems arrive unlabeled — interleaving trains diagnosis, the step blocked practice skips.' },
+      { f: 'Error-log entry: the four fields?', b: 'Problem · what happened · specific root cause · testable cue for next time.' },
+      { f: 'No pattern cue fires — what do you do?', b: 'State brute force + its complexity; let the inefficiency (e.g. inner membership scan) point at the drawer.' },
+      { f: 'A good root cause vs a bad one?', b: 'Good: "didn\'t test empty input" (implies a fix). Bad: "careless" (a mood, not a cause).' },
+      { f: 'What is the Day 28 score for?', b: 'A located baseline. The metric that matters is the Day 35 delta after a week of tree/graph patterns.' },
+    ],
+    deepDive: [
+      { label: 'Make the drill recurring', note: 'Schedule a weekly 30-minute mini-drill (two unlabeled problems from the NeetCode pool) every weekend through Phase 2. Small, repeated, interleaved doses beat cramming before Day 35 — the SM-2 principle applied to problem-solving itself.' },
+    ],
+  },
 ];

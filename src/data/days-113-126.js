@@ -1661,14 +1661,21 @@ TOOLS = {"list_files": list_files, "read_file": read_file}
 
 # --- the "LLM": a deterministic policy over (task, history) ---
 class ScriptedLLM:
+    def _needle(self, task):
+        # a real model infers what to look for; we script that inference
+        for w in ["rate", "password", "quota", "workers"]:
+            if w in task.lower():
+                return w
+        return None
     def decide(self, task, history):
+        needle = self._needle(task)
         listed = [h for h in history if h["tool"] == "list_files"]
         if not listed:
             return {"tool": "list_files", "args": {}}
-        # if any read observation contains a promising line, answer from it
+        # if any read observation contains the sought line, answer from it
         for h in history:
-            if h["tool"] == "read_file" and "rate" in str(h["obs"]):
-                line = [l for l in str(h["obs"]).splitlines() if "rate" in l][0]
+            if h["tool"] == "read_file" and needle and needle in str(h["obs"]):
+                line = [l for l in str(h["obs"]).splitlines() if needle in l][0]
                 name = h["args"]["name"]
                 return {"tool": "final_answer",
                         "args": {"text": f"{name} sets {line.strip()}"}}
@@ -2101,7 +2108,7 @@ STEPS = [  # a 12-step mission's (action, observation) pairs, pre-scripted
         "draft_answer -> settings.yaml sets rate_limit 120; ERR-4092 = exceeded",
     ], start=1)
 ]
-BUDGET = 900
+BUDGET = 180
 
 print("--- naive: append everything ---")
 hist, total = [], 0

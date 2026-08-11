@@ -2336,4 +2336,587 @@ Hints: (a) ≈ 353M; blocks scale as d² so doubling d quadruples them while dou
       { label: 'Learned vs sinusoidal vs rotary positions', note: 'GPT-2 learns a position table (hard context cap); the 2017 paper used fixed sinusoids; modern models (Llama-family) use RoPE, rotating Q/K by position angle. Worth a search once Day 97\'s build makes position embeddings concrete.' },
     ],
   },
+  {
+    id: 'd096', day: 96, week: 14, phase: 5, kind: 'lesson',
+    title: 'Tokenization',
+    analogy: 'The LLM\'s alphabet',
+    objectives: [
+      'Explain why LLMs use subword units instead of characters or whole words',
+      'Execute the BPE training algorithm by hand and in code on a small corpus',
+      'Use tiktoken to count tokens and estimate the cost of real prompts',
+      'Predict tokenizer quirks: spaces, capitalization, numbers, code, and non-English text',
+      'Connect tokenization to model failures in arithmetic and spelling',
+    ],
+    prereqs: [
+      { day: 92, label: 'Embeddings — what tokens become' },
+      { day: 95, label: 'Transformer inputs & vocab size' },
+      { day: 5, label: 'Strings & encodings' },
+    ],
+    eli5: `Before a model can read, someone has to decide what its alphabet is. Whole words? The dictionary never closes — "unfollowable", "COVID-19", "skibidi" — and every unseen word becomes an illiterate shrug. Single characters? Nothing is ever unseen, but "electroencephalography" becomes 25 tiny pieces and the model burns its attention budget just spelling. The working compromise is a Lego kit of subwords: common words are single bricks, rare words snap together from pieces ("token" + "ization"), and any text — any! — can be built, worst case letter by letter.
+
+The kit isn't designed by a linguist; it's grown by counting. Byte-pair encoding starts with raw bytes and repeats one move: find the pair of adjacent pieces that occurs most often in a huge pile of text, glue it into a new brick, add it to the kit. Do that 50,000 times and you have GPT's vocabulary — a frozen record of what was common in its training data. Every quirk you will ever debug traces back to this: " hello" (with space) and "hello" are different bricks, "1234" might be one brick while "1235" is two, and your customer's German compound nouns shatter into gravel. The model never sees letters or words — only your brick IDs.`,
+    why: `Tokens are the currency of your career: every API bill (Day 107), every context-window budget (Day 122), and every latency target (Day 155) is denominated in them. An FDE who can say "your prompts average 3,400 tokens, of which 2,100 are a boilerplate header — cache it and costs drop 60%" is worth their rate. Tokenization also explains a whole genus of model failures — miscounted letters, flaky arithmetic, worse performance in Thai than English — and "that's a tokenizer artifact" is a diagnosis you will deliver many times.`,
+    tech: `### BPE training, precisely
+
+Start with a base vocabulary (in modern byte-level BPE: all 256 bytes — nothing is ever out-of-vocabulary). Then loop: (1) count all adjacent symbol pairs in the training corpus; (2) merge the most frequent pair into a new symbol; (3) append the merge rule to an ordered list; repeat until the target vocab size (GPT-2: 50,257; modern models: 100k–200k). ENCODING new text replays the learned merges in order; DECODING is concatenation. The merge list is the tokenizer — a pure artifact of training-data statistics, frozen forever after.
+
+### Trade-offs and quirks
+
+Bigger vocab → fewer tokens per text (cheaper, longer effective context, more embedding parameters: vocab·d from yesterday's napkin). Smaller vocab → the opposite. The quirks that matter in practice:
+
+- **Leading spaces**: GPT-style tokenizers fold the space into the following word — " world" and "world" are DIFFERENT tokens. A trailing space at the end of your prompt forces a rare tokenization and measurably degrades completions.
+- **Numbers**: split inconsistently ("1234" one token, "12345" maybe "123"+"45"). Digit-chunk arithmetic is hard when the model can't see digits — a root cause of LLM arithmetic flakiness.
+- **Spelling games**: "count the r's in strawberry" is hard because the model sees token IDs, not letters.
+- **Non-English**: anything rare in training data fragments — the same sentence can cost 3–5× more tokens in Burmese than English. Cost AND quality follow.
+- **Code**: indentation, camelCase splits, and rare identifiers tokenize wastefully — one reason code models retrain tokenizers on code corpora.
+
+### Counting and costing
+
+tiktoken (OpenAI's tokenizer library) encodes locally and instantly: count tokens before sending anything, budget prompts, and estimate cost as tokens/1M × price. Different models use different tokenizers — counts from one do NOT transfer exactly to another (Anthropic's differs; use API usage fields for exact billing, Day 106). Rule of thumb for English prose: ~4 characters or ~0.75 words per token — but measure, never assume, for code or non-English.`,
+    viz: 'token-stream',
+    guided: [
+      {
+        title: 'BPE by hand, then in 30 lines',
+        minutes: 25,
+        body: `1. On paper, train BPE on the corpus "low low low lower lowest" with base vocabulary = characters. Count pairs: (l,o) appears 5 times, (o,w) 5 times… Merge the most frequent (break ties by first seen), write the merge rule, and repeat for 6 merges. Track how "low" becomes one symbol.
+2. Predict: after your 6 merges, how does the UNSEEN word "lowly" tokenize? (Replay merges in order — you should get [low, l, y] or similar depending on your ties.)
+3. Now run the starter implementation on the same corpus and compare its merge list to yours. Investigate any difference (tie-breaking order is the usual culprit).
+4. Encode "lowest lowly slow" with the trained merges and stare at the output: which words are single bricks, which are gravel, and why?`,
+        code: `def get_pairs(tokens):
+    counts = {}
+    for word in tokens:
+        for a, b in zip(word, word[1:]):
+            counts[(a, b)] = counts.get((a, b), 0) + 1
+    return counts
+
+def merge_word(word, pair, glued):
+    out, i = [], 0
+    while i < len(word):
+        if i < len(word) - 1 and (word[i], word[i+1]) == pair:
+            out.append(glued); i += 2
+        else:
+            out.append(word[i]); i += 1
+    return tuple(out)
+
+corpus = 'low low low lower lowest'.split()
+tokens = [tuple(w) for w in corpus]          # chars as base vocab
+merges = []
+
+for step in range(6):
+    pairs = get_pairs(tokens)
+    if not pairs:
+        break
+    best = max(pairs, key=pairs.get)          # most frequent pair
+    glued = best[0] + best[1]
+    merges.append(best)
+    tokens = [merge_word(w, best, glued) for w in tokens]
+    print(f'merge {step+1}: {best} -> {glued}   corpus: {tokens}')
+
+def encode(word, merges):
+    w = tuple(word)
+    for pair in merges:                       # replay merges IN ORDER
+        w = merge_word(w, pair, pair[0] + pair[1])
+    return w
+
+for w in ['lowest', 'lowly', 'slow']:
+    print(w, '->', encode(w, merges))`,
+      },
+      {
+        title: 'tiktoken lab — count and cost real prompts',
+        minutes: 20,
+        body: `1. (Local run: pip install tiktoken.) Load the GPT-4-era encoding: \`enc = tiktoken.get_encoding('cl100k_base')\`.
+2. Tokenize and inspect: "hello world", " hello world" (leading space), "Hello World", "HELLO WORLD". Print token counts AND the decoded piece for each ID (enc.decode([id])). Note how case and spaces change everything.
+3. Tokenize "1234", "12345", "3.14159", and a 6-digit multiplication prompt. Write one sentence connecting what you see to arithmetic flakiness.
+4. Tokenize the same 2-sentence text in English and (via any translation you have) one non-Latin-script language; compare counts.
+5. Cost drill: take a realistic 3-paragraph system prompt (write one for a support bot), count its tokens, and compute the monthly cost of sending it on every one of 100k daily requests at a made-up rate of 3 dollars per million input tokens. This number — the price of a wasteful system prompt at scale — is one to remember.`,
+        code: `import tiktoken
+
+enc = tiktoken.get_encoding('cl100k_base')
+
+for s in ['hello world', ' hello world', 'Hello World', 'HELLO WORLD']:
+    ids = enc.encode(s)
+    pieces = [enc.decode([i]) for i in ids]
+    print(f'{s!r:22} {len(ids)} tokens  {pieces}')
+
+for s in ['1234', '12345', '3.14159', '123456 * 654321 =']:
+    print(f'{s!r:22}', [enc.decode([i]) for i in enc.encode(s)])
+
+system_prompt = '...paste your 3-paragraph support-bot prompt here...'
+n = len(enc.encode(system_prompt))
+daily = 100_000
+cost = n * daily * 30 / 1_000_000 * 3.0
+print(f'{n} tokens x {daily}/day -> about {cost:,.0f} dollars/month')`,
+      },
+    ],
+    practice: [
+      {
+        title: 'The tokenizer failure gallery',
+        minutes: 20,
+        body: `Build \`quirks.md\`: five demonstrations, each with the tokenization printed and a two-sentence explanation — (1) a spelling task the tokenizer sabotages ("how many r's in strawberry"); (2) an arithmetic case where digit grouping is visibly unhelpful; (3) a trailing-space prompt vs the same without; (4) an English vs non-English cost comparison with the ratio computed; (5) one quirk you DISCOVER yourself by poking around (code, emoji, URLs, and rare names are fertile ground).
+
+Constraints: every claim backed by an actual printed tokenization, not folklore.
+
+Hints: for (5), try tokenizing a UUID, a base64 string, or deeply indented Python.`,
+      },
+    ],
+    project: {
+      title: 'token_toolkit.py — the counting habit, installed',
+      brief: `Commit \`token_toolkit.py\` with three functions you will genuinely reuse: \`count(text, encoding='cl100k_base')\`; \`cost(text, price_per_mtok, calls_per_day)\` returning a daily/monthly estimate; and \`report(text)\` printing count, char/token ratio, the 10 longest tokens found, and a fragmentation warning when the char/token ratio drops below 2.5 (a heuristic for "this text tokenizes badly"). Plus your toy BPE from guided 1 as \`bpe_toy.py\` with a test asserting the merge list on the low/lower/lowest corpus. Include quirks.md. On Day 107 the cost function grows into your real API cost dashboard; on Day 122 count() budgets agent context windows.`,
+      rubric: [
+        'Toy BPE reproduces the documented merge sequence with a passing test',
+        'count/cost/report work on arbitrary text with the specified outputs',
+        'Fragmentation warning fires on an appropriate input (demonstrate one)',
+        'quirks.md has all five demonstrations with real printed tokenizations',
+        'System-prompt cost drill result recorded with the arithmetic shown',
+        'Committed and importable (no top-level side effects)',
+      ],
+    },
+    mistakes: [
+      'Assuming one token = one word. English prose averages ~0.75 words/token; code and non-English can be far worse. Measure with the actual tokenizer.',
+      'Counting tokens with one model\'s tokenizer and billing another\'s. Vocabularies differ; for exact billing use the provider\'s usage fields (Day 106) — tiktoken is for local estimation.',
+      'Ending a prompt with a trailing space and wondering why completions degrade. " world" is its own token; a dangling space pushes the model off its learned distribution.',
+      'Blaming "model stupidity" for arithmetic and spelling failures that are tokenization artifacts — the model literally cannot see digits or letters inside its bricks.',
+      'Forgetting vocab size is a parameter trade-off: 200k vocab shortens sequences but costs vocab·d embedding parameters (yesterday\'s napkin) and dilutes rare-token training.',
+      'Treating the tokenizer as swappable after training. Model weights are married to their tokenizer\'s IDs; changing it means retraining or careful surgery.',
+    ],
+    quiz: [
+      {
+        q: 'Why do LLMs use subword tokenization instead of whole words?',
+        o: [
+          'Subwords are more interpretable to humans',
+          'A fixed word vocabulary cannot cover unseen words, while characters make sequences wastefully long — subwords balance coverage and length',
+          'Subwords make attention linear instead of quadratic',
+          'It was a historical accident',
+        ],
+        x: 1,
+        w: 'Byte-level BPE guarantees any text encodes (worst case, bytes) while keeping common strings as single tokens — the compromise between the open-vocabulary problem and sequence-length cost.',
+        revisit: 96,
+      },
+      {
+        q: 'In BPE training, each iteration…',
+        o: [
+          'Splits the least frequent token into characters',
+          'Merges the most frequent adjacent pair into a new vocabulary symbol',
+          'Removes stopwords from the corpus',
+          'Assigns embeddings to the vocabulary',
+        ],
+        x: 1,
+        w: 'BPE greedily grows the vocab by gluing the most common adjacent pair, recording an ordered merge list that encoding later replays. Embeddings come later and belong to the model, not the tokenizer.',
+        revisit: 96,
+      },
+      {
+        q: 'A model reliably fails "how many letter r\'s are in strawberry". The most honest explanation is…',
+        o: [
+          'The model has too few parameters',
+          'The model sees token IDs like [str][awberry], not letters — the characters are invisible to it',
+          'The training data lacked fruit vocabulary',
+          'The temperature was set too high',
+        ],
+        x: 1,
+        w: 'Tokenization hides the character level. Counting letters inside a token requires memorized knowledge of that token\'s spelling, which is exactly the kind of fact models half-know.',
+        revisit: 96,
+      },
+    ],
+    resources: [
+      { label: 'Karpathy — Let\'s build the GPT Tokenizer', url: 'https://www.youtube.com/watch?v=zduSFxRajkE', type: 'video', time: '2 h 13 min (first hour today; finish this week)' },
+      { label: 'OpenAI Cookbook — token counting notebooks (search "tiktoken")', url: 'https://github.com/openai/openai-cookbook', type: 'repo', time: '15 min' },
+      { label: 'Hugging Face LLM Course — the tokenizers chapters', url: 'https://huggingface.co/learn/llm-course/chapter1/1', type: 'course', time: '25 min' },
+    ],
+    schedule: [
+      { activity: 'Spaced-rep warm-up: Days 94–95 cards', minutes: 10 },
+      { activity: 'ELI5 + tech read; Karpathy tokenizer video (first 40 min at 1.5x)', minutes: 30 },
+      { activity: 'Guided: BPE by hand + in code, tiktoken cost lab', minutes: 45 },
+      { activity: 'Practice: the failure gallery', minutes: 20 },
+      { activity: 'Project commit + quiz + flashcards', minutes: 15 },
+    ],
+    completion: [
+      'Hand-traced BPE merges match the code\'s merge list (ties explained)',
+      'tiktoken lab run: spaces/case/number quirks observed and noted',
+      'System-prompt cost drill computed and recorded',
+      'quirks.md has five backed demonstrations; token_toolkit.py committed',
+      'Quiz ≥ 2/3',
+    ],
+    connections: {
+      back: 'Tokens are what Day 92\'s embedding table looks up — vocab size sets its row count (Day 95\'s vocab·d term). The byte-level guarantees echo Day 5\'s encodings lesson.',
+      forward: 'Tomorrow your GPT uses the simplest tokenizer (characters) so architecture stays center stage; Day 99 revisits that choice. Day 106 reads token counts off real API responses, Day 107 turns count into cost engineering, and Day 122 budgets agent context in exactly these units.',
+    },
+    flashcards: [
+      { f: 'BPE training in one line?', b: 'Repeatedly merge the most frequent adjacent symbol pair into a new vocab entry, recording ordered merge rules.' },
+      { f: 'Why byte-level base vocabulary?', b: 'All 256 bytes are always available — no text is ever out-of-vocabulary; worst case it encodes byte-by-byte.' },
+      { f: 'Vocab size trade-off?', b: 'Bigger: shorter sequences (cheaper), but vocab·d more embedding params and rarer tokens per entry. Smaller: reverse.' },
+      { f: 'Why is " world" ≠ "world"?', b: 'GPT-style BPE folds the leading space into the token. Trailing prompt spaces force rare tokenizations and hurt completions.' },
+      { f: 'Root cause of LLM spelling/arithmetic flakiness?', b: 'Models see token IDs, not characters/digits — the sub-token structure is invisible.' },
+      { f: 'English prose rule of thumb?', b: '~4 chars or ~0.75 words per token — but always measure for code or non-English.' },
+    ],
+    deepDive: [
+      { label: 'Finish the Karpathy tokenizer video and build minbpe-style byte-level BPE', note: 'Extend bpe_toy.py from characters to bytes, train on a page of real text, and encode emoji — watching multi-byte characters split is the moment byte-level BPE clicks.' },
+    ],
+  },
+  {
+    id: 'd097', day: 97, week: 14, phase: 5, kind: 'project',
+    title: 'Tiny GPT Lab I — Build It',
+    analogy: 'Your own GPT, pocket-sized',
+    objectives: [
+      'Assemble a working char-level GPT from parts you already understand: embeddings, attention, FFN blocks, and a head',
+      'Verify every tensor shape at every stage and explain what each dimension means',
+      'Apply the causal mask correctly and prove future tokens cannot leak into predictions',
+      'Overfit a single batch as a sanity test and explain why that proves the wiring is right',
+    ],
+    prereqs: [
+      { day: 94, label: 'Attention — Q/K/V and the weight table' },
+      { day: 95, label: 'The transformer block stack' },
+      { day: 96, label: 'Tokenization — chars to ids' },
+      { day: 88, label: 'Training loops & data' },
+    ],
+    eli5: `You have spent two weeks touring an engine factory: the day you saw pistons (attention), the day you saw the fuel system (embeddings), the day you saw the assembly line layout (the block stack). Today you stop touring and build the engine — a miniature one, on your own workbench, from the exact parts you studied. It will be tiny: a few thousand parameters where GPT-4-class models have trillions of times more. That is the point. A model airplane teaches you more about flight than a photo of a 747, because YOU have to make every part fit.
+
+The build order matters, and it is the same trick as testing each Lego section before snapping them together: token embedding first (does a character id become a vector of the right size?), then position embedding, then ONE attention block (do the shapes survive the trip through?), then the stack, then the head that turns the final vectors back into "which character comes next?" scores. After each part, you print the shapes and check them against what you predicted. By tonight you will have a real GPT — untrained, babbling static — but structurally identical to the ones running the world. Tomorrow's checkpoint locks the week in; the day after, you train it and watch it learn to spell.`,
+    why: `"Have you actually built a transformer?" separates candidates in every serious AI-engineering loop — not because jobs require writing attention from scratch, but because debugging production LLM systems constantly requires knowing what is inside: why context length costs memory quadratically (the T×T attention matrix you will allocate today), why generation slows as sequences grow, what a logit actually is when you set logit bias in an API call. FDEs get asked "how does this actually work?" by skeptical customer architects; the engineer who has built one answers with earned confidence instead of recited analogy.`,
+    tech: `### The architecture you are assembling
+
+A decoder-only transformer, char-level, deliberately small (defaults: vocab from your corpus ≈ 65, n_embd=64, n_head=4, n_layer=2, block_size=64 context). The forward pass:
+
+1. **Token embedding**: ids (B,T) → vectors (B,T,C) via a lookup table — Day 92's map of meaning, learned from scratch.
+2. **Position embedding**: a learned vector per position 0..T-1, added elementwise. Attention is order-blind (Day 94); this is how order gets back in.
+3. **N blocks**, each: LayerNorm → multi-head causal self-attention → residual add → LayerNorm → FFN (C → 4C → C) → residual add. Residuals are the gradient highway (Day 95); pre-norm keeps activations stable.
+4. **Head**: final LayerNorm, then a linear layer (C → vocab_size) producing **logits** — raw next-char scores at every position.
+5. **Loss**: cross-entropy (Day 62's surprise bill) between position t's logits and the true char at t+1, averaged over all positions — every position is a training example.
+
+### The causal mask, precisely
+
+Attention scores form a (T,T) table; adding −∞ above the diagonal before softmax zeroes the weights on future positions. Get this wrong and the model "predicts" token t+1 by copying it — loss crashes to ~0 instantly, which is why your test suite includes a leak check: corrupt the LAST character of the input and confirm predictions at earlier positions do not change.
+
+### Why overfitting one batch is the sanity test
+
+A correctly wired model given ONE batch repeatedly must drive loss toward zero — it can simply memorize. If it cannot, something is broken: shapes silently broadcasting, mask missing, loss comparing wrong positions, optimizer not seeing parameters. If it can, your plumbing is sound and any later trouble is training dynamics (Day 89), not wiring. Expected initial loss is another free check: with ~65 chars, random guessing gives cross-entropy ≈ ln(65) ≈ 4.17. Materially different at step 0 = bug, before you have trained anything.`,
+    viz: 'transformer-stack',
+    guided: [
+      {
+        title: 'Embeddings in, shapes verified',
+        minutes: 15,
+        body: `Work in \`tinygpt/model.py\` (PyTorch, local — torch does not run in the browser interpreter). Karpathy's "Let's build GPT" video is the companion for the whole lab; build alongside it, but type every line yourself.
+
+1. Load a small corpus (~1 MB of any public-domain text you like). Build the char vocab and encode/decode maps exactly as on Day 96.
+2. Create \`tok_emb = nn.Embedding(vocab_size, n_embd)\` and \`pos_emb = nn.Embedding(block_size, n_embd)\`.
+3. Make one batch (B=4, T=8) of ids. BEFORE running: write down the shape after each of — token lookup, position lookup, their sum. Then print and check.
+4. The sum works via broadcasting: (B,T,C) + (T,C). Say out loud what is being stretched — this is Day 64's broadcasting rule earning its keep.`,
+        code: `import torch
+import torch.nn as nn
+
+# --- config (tiny on purpose) ---
+vocab_size, n_embd, block_size = 65, 64, 64
+B, T = 4, 8
+
+tok_emb = nn.Embedding(vocab_size, n_embd)
+pos_emb = nn.Embedding(block_size, n_embd)
+
+idx = torch.randint(0, vocab_size, (B, T))     # fake batch of char ids
+te = tok_emb(idx)                               # predict: (B, T, n_embd)?
+pe = pos_emb(torch.arange(T))                   # predict: (T, n_embd)?
+x = te + pe                                     # broadcast to (B, T, n_embd)
+print(te.shape, pe.shape, x.shape)`,
+      },
+      {
+        title: 'One causal attention head, then multi-head, then the block',
+        minutes: 30,
+        body: `1. Implement a single \`Head\`: linear maps to Q, K, V (each C → head_size); scores = Q @ K.T / sqrt(head_size); apply the causal mask (\`masked_fill\` on a lower-triangular buffer); softmax; weights @ V. Print the (T,T) weight matrix for one head — row t must be zero after column t. Compare with the numbers you hand-computed on Day 94.
+2. \`MultiHead\`: run n_head heads, concat outputs (back to C), one projection layer.
+3. \`FeedForward\`: Linear(C, 4C) → ReLU (or GELU) → Linear(4C, C).
+4. \`Block\`: pre-norm residual wiring — \`x = x + sa(ln1(x))\` then \`x = x + ff(ln2(x))\`. Push your (B,T,C) tensor through one block: same shape out, different values.
+5. Leak test: run the block, change the LAST character of the input, rerun — outputs at positions before the change must be identical. If not, your mask is wrong. This is the test that matters.`,
+        code: `class Head(nn.Module):
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k, q, v = self.key(x), self.query(x), self.value(x)
+        att = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5   # (B,T,T)
+        att = att.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        att = torch.softmax(att, dim=-1)
+        return att @ v                                         # (B,T,head_size)`,
+      },
+      {
+        title: 'Assemble the full model and overfit one batch',
+        minutes: 25,
+        body: `1. \`TinyGPT\`: embeddings → n_layer Blocks → final LayerNorm → \`lm_head\` Linear(C, vocab_size). Forward returns logits (B,T,vocab) and, given targets, cross-entropy loss (reshape to (B*T, vocab) vs (B*T,)).
+2. Instantiate and print the parameter count (sum of p.numel()). Predict it first from the config — being able to budget parameters is a real skill (Day 128's LoRA arithmetic builds on it).
+3. Check initial loss on one batch: should be ≈ ln(vocab_size) ≈ 4.17. Explain why before you run.
+4. Overfit: AdamW, lr=1e-3, the SAME batch, 300 steps. Loss must fall below 0.1. Print a sample generation from the overfit model — it should parrot fragments of that one batch back at you. That parroting is your proof of life.
+5. Commit: \`tinygpt/model.py\` with the leak test and the overfit script under \`if __name__ == '__main__':\`.`,
+      },
+    ],
+    practice: [
+      {
+        title: 'Break it three ways, predict each failure first',
+        minutes: 15,
+        body: `Sabotage your working model one change at a time, predicting the symptom BEFORE each run, then restore it:
+
+1. Remove the causal mask entirely. Prediction: what happens to the loss curve on the overfit test, and why is a very low loss here BAD news?
+2. Remove the position embedding. Will the one-batch overfit still succeed? (It can memorize — but what changes in generated text structure?)
+3. Remove the residual connections (\`x = sa(ln1(x))\`). Watch the loss. With only 2 layers the damage is mild — state why Day 95 says it becomes fatal at 12+.
+
+Hints: (1) masks prevent an answer-key leak; (2) memorization vs order-awareness are different capabilities; (3) residuals are the gradient highway — depth is what collapses without them.`,
+      },
+    ],
+    project: {
+      title: 'tinygpt/model.py — a verified, untrained GPT',
+      brief: `Ship the model file that Day 99 will train. It must contain: the config block at top (vocab_size, n_embd, n_head, n_layer, block_size); Head, MultiHead, FeedForward, Block, and TinyGPT classes; a \`generate(idx, max_new_tokens)\` method (loop: crop context to block_size, forward, take last position's logits, softmax, sample, append); and a \`__main__\` harness that runs the three verifications — expected initial loss ≈ ln(vocab), the future-leak test, and the 300-step single-batch overfit — printing PASS/FAIL for each. Commit with the parameter count in the commit message.`,
+      rubric: [
+        'Model builds and forward pass returns logits (B,T,vocab_size) with loss when targets given',
+        'Initial loss within 0.3 of ln(vocab_size) and you can explain why that is the expected value',
+        'Leak test passes: corrupting the last input character leaves earlier positions\' outputs bit-identical',
+        'Single-batch overfit reaches loss < 0.1 in ≤ 500 steps and the sample parrots the batch',
+        'generate() produces output (static is fine — it is untrained) without shape errors at any length up to block_size',
+        'Committed with parameter count stated and verified against your hand prediction',
+      ],
+    },
+    mistakes: [
+      'Forgetting the 1/sqrt(head_size) scaling. Softmax saturates on large dot products, gradients vanish, and the model trains poorly — the symptom is subtle, which is why you add it now while everything else is verified.',
+      'Masking AFTER softmax instead of before. Weights no longer sum to 1 over allowed positions; the leak test may even pass while the math is silently wrong. Mask with −∞ scores, then softmax.',
+      'Reshaping logits wrong for cross-entropy (mixing up (B*T, vocab) vs (B, vocab, T)). PyTorch\'s F.cross_entropy expects classes in dim 1 — reshape explicitly and check loss ≈ ln(vocab) at init to catch it.',
+      'Skipping the overfit test and going straight to full training. Then when loss plateaus you cannot tell wiring bugs from bad hyperparameters — Day 99 becomes archaeology instead of science.',
+      'Treating tiny scale as "not real". Same equations, same failure modes, same debugging instincts as the frontier models — only the constants differ.',
+    ],
+    quiz: [
+      {
+        q: 'At initialization your char-GPT (vocab 65) shows loss 2.1 on the first batch. What does this most likely mean?',
+        o: [
+          'Great initialization — training will be fast',
+          'Something is wrong: untrained loss should be ≈ ln(65) ≈ 4.17, so information is leaking or the loss is miscomputed',
+          'The learning rate is too high',
+          'Nothing — initial loss is random',
+        ],
+        x: 1,
+        w: 'Random guessing over 65 chars costs cross-entropy ln(65) ≈ 4.17. A materially lower loss before any training means the model can see the answer — usually a masking or target-alignment bug.',
+        revisit: 97,
+      },
+      {
+        q: 'The causal mask sets attention scores to −∞ above the diagonal BEFORE softmax because…',
+        o: [
+          'it saves memory',
+          'softmax turns −∞ into exactly 0 weight, so future tokens contribute nothing and remaining weights still sum to 1',
+          'it makes training faster',
+          'positions after t are padding',
+        ],
+        x: 1,
+        w: 'e^−∞ = 0, and the softmax renormalizes over what remains. Zeroing after softmax would break the sum-to-1 property and quietly corrupt the weighted average.',
+        revisit: 94,
+      },
+      {
+        q: 'Your model overfits a single batch to loss 0.05. What have you proven?',
+        o: [
+          'The model will generalize well',
+          'The hyperparameters are optimal',
+          'The wiring is sound — gradients flow and the model can fit data; generalization is a separate, untested question',
+          'The corpus is too easy',
+        ],
+        x: 2,
+        w: 'One-batch overfitting is a plumbing test: it certifies shapes, masking, loss, and optimizer wiring. It says nothing about generalization — that is what Day 99\'s real training and val split measure.',
+        revisit: 89,
+      },
+    ],
+    resources: [
+      { label: 'Karpathy — "Let\'s build GPT: from scratch, in code" (Zero to Hero)', url: 'https://karpathy.ai/zero-to-hero.html', type: 'video', time: '1 h of the 2 h video today' },
+      { label: 'nanoGPT — the grown-up version of what you built', url: 'https://github.com/karpathy/nanoGPT', type: 'repo', time: '15 min skim' },
+      { label: 'The Illustrated Transformer — keep it open as your map', url: 'https://jalammar.github.io/illustrated-transformer/', type: 'article', time: 'reference' },
+      { label: 'Attention Is All You Need — now you can read §3 for real', url: 'https://arxiv.org/abs/1706.03762', type: 'paper', time: '20 min' },
+    ],
+    schedule: [
+      { activity: 'Spaced-rep warm-up: due cards from Days 92–96', minutes: 10 },
+      { activity: 'ELI5 + tech read; trace the build order on the visualizer', minutes: 15 },
+      { activity: 'Guided: embeddings + attention head + block (with leak test)', minutes: 45 },
+      { activity: 'Guided: assemble TinyGPT + overfit one batch', minutes: 25 },
+      { activity: 'Practice: break it three ways', minutes: 15 },
+      { activity: 'Quiz + commit the verified model', minutes: 10 },
+    ],
+    completion: [
+      'All three __main__ verifications print PASS (init loss, leak test, overfit)',
+      'You predicted the parameter count within 20% before printing it',
+      'The three sabotage experiments ran with predictions written BEFORE each run',
+      'Quiz ≥ 2/3 and model.py committed',
+    ],
+    connections: {
+      back: 'This is assembly day: Day 92\'s embeddings, Day 94\'s attention (your hand-computed weights reappear in the printed matrix), Day 95\'s block stack, Day 96\'s tokenizer, and Day 88\'s training loop all snap together. The overfit test is Day 89\'s diagnostics used as a tool.',
+      forward: 'Day 98 locks the week in before Day 99 trains this exact model and you watch gibberish become spelling. The parameter-budget instinct returns in Day 128 (LoRA\'s low-rank arithmetic), and the KV/attention-cost intuition powers Day 155\'s serving-latency work.',
+    },
+    flashcards: [
+      { f: 'Expected initial loss for a char-LM with vocab V?', b: 'ln(V) — random guessing\'s cross-entropy. Materially lower at init = leakage bug.' },
+      { f: 'The one test that certifies a causal mask?', b: 'Corrupt the LAST input token; outputs at earlier positions must be unchanged.' },
+      { f: 'Why overfit a single batch on purpose?', b: 'Plumbing test: a correct model can memorize one batch (loss→0). Failure = wiring bug, not hyperparameters.' },
+      { f: 'Pre-norm block wiring, in one line?', b: 'x = x + attn(LN(x)); x = x + ffn(LN(x)) — residuals outside, norms inside.' },
+      { f: 'Why scale attention scores by 1/√head_size?', b: 'Keeps dot products in softmax\'s sensitive range; unscaled scores saturate it and kill gradients.' },
+    ],
+    deepDive: [
+      { label: 'Read nanoGPT\'s model.py against yours', url: 'https://github.com/karpathy/nanoGPT', note: 'Same skeleton, plus dropout, weight tying, and init tricks. Diffing a professional implementation against your own is a senior-engineer habit worth starting now.' },
+    ],
+  },
+  {
+    id: 'd098', day: 98, week: 14, phase: 5, kind: 'review',
+    title: 'Week 14 Checkpoint: Attention, Locked In',
+    analogy: 'Closing the toolbox lid',
+    objectives: [
+      'Reproduce the week\'s core machinery from memory: embeddings, attention arithmetic, the block stack, and BPE',
+      'Explain attention twice — once in pure analogy, once in precise Q/K/V terms — and self-grade both against a rubric',
+      'Retake the week\'s weak quiz areas and clear the due flashcard deck',
+      'Verify your Day 97 model is ready for training day with a pre-flight checklist',
+    ],
+    prereqs: [
+      { day: 92, label: 'Embeddings — meaning as geometry' },
+      { day: 94, label: 'Attention — Q/K/V' },
+      { day: 95, label: 'The transformer' },
+      { day: 97, label: 'Tiny GPT — built and verified' },
+    ],
+    eli5: `A craftsman ends the week the same way every time: tools cleaned, laid out on the bench, and named out loud — because next Monday's job (training your GPT) depends on grabbing each one without looking. This week you acquired the most valuable tools in the modern AI toolbox: the map of meaning (embeddings), the everyone-looks-at-everyone trick (attention), the assembly line that stacks it (the transformer), the LLM's alphabet (tokens), and yesterday, a working engine built from all four.
+
+Today you close the lid properly. Not by rereading — rereading is watching someone else clean tools — but by the blank-page test: shut every note and reproduce the week from memory. Draw the attention table for four tokens. Write the block wiring. Hand-run BPE's first merge on a tiny corpus. Where your memory serves the answer instantly, that tool is truly yours. Where it hesitates, you have found this week's revision target — better to find it today than mid-interview, or mid-demo when a customer architect asks "so how does attention actually work?"`,
+    why: `"Explain attention to me" is the single most common LLM-fundamentals interview prompt in 2026 loops — asked at ELI5 level to test communication, then at tech level to test depth, exactly the two registers you practice today. The pre-flight ritual matters professionally too: FDEs and platform engineers alike learn to verify systems BEFORE the important run, because discovering a broken checkpoint during Monday's training session (or a customer demo) costs credibility that a 10-minute Friday checklist would have saved.`,
+    tech: `### Why the blank-page protocol works
+
+Retrieval practice is the most replicated result in learning science: the act of pulling a memory OUT strengthens it far more than putting it in again. Rereading Day 94 produces fluent recognition ("yes, Q/K/V, I know this") that evaporates under pressure; writing the attention computation from nothing produces durable recall. Today's structure is deliberate: recall first (blank page), verify second (open the notes and diff), repair third (targeted re-study of exactly what missed). The diff step is where learning happens — treat every gap as a gift with a day-number address on it.
+
+### The week, compressed to five sentences
+
+Embeddings turn discrete symbols into vectors whose geometry encodes similarity (Day 92), and word2vec showed those vectors are learned purely from co-occurrence (Day 93). Attention lets every position build its output as a similarity-weighted average of every allowed position's Value, with weights from Query·Key dot products, scaled and softmaxed (Day 94). The transformer stacks attention + FFN blocks with residual connections and layer norms, plus position embeddings because attention itself is order-blind (Day 95). BPE tokenization turns text into the subword ids the whole machine consumes, explaining half of LLMs' odd failure modes (Day 96). Day 97 proved you can assemble all of it into a working, verified model.
+
+### Self-grading your two explanations
+
+The dual-register drill is graded against four criteria per register. ELI5: (1) a concrete analogy that maps — every element corresponds to a real mechanism; (2) no unexplained jargon; (3) the LISTENER could now answer "why does the model look back at earlier words?"; (4) under 90 seconds aloud. Tech: (1) Q, K, V roles stated precisely; (2) scaling and softmax justified, not just mentioned; (3) causal masking and its purpose included; (4) multi-head motivated (different heads learn different relations). Score honestly — the point of a rubric is finding the criterion you fail while it is still cheap to fix. This is also Day 105's stakeholder-explainer warm-up and Day 179's interview drill, arriving early.`,
+    viz: 'attention-heat',
+    guided: [
+      {
+        title: 'Blank page: rebuild the week from memory',
+        minutes: 30,
+        body: `Close every note, lesson, and file. On paper or a blank editor:
+
+1. **Attention arithmetic (10 min)**: for tokens ["the","cat","sat"], write the full computation — Q/K/V from where, score formula, scaling, mask, softmax, weighted sum. Invent small numbers and run one row end to end, Day 94 style.
+2. **Block diagram (5 min)**: draw the decoder block wiring exactly — where the residuals attach, where the layer norms sit (pre-norm), what the FFN's two layers do to the width.
+3. **BPE first merge (5 min)**: corpus "low low lower" — what pair merges first and what does the vocab gain?
+4. **Model checklist (5 min)**: list the 5 components of your Day 97 TinyGPT in forward-pass order with tensor shapes.
+5. **Diff (5 min)**: open the week's notes and your model.py. Mark every gap or error in red. Each red mark maps to a day — that is your repair list for the flashcard block.`,
+      },
+      {
+        title: 'The dual-register drill — explain attention twice',
+        minutes: 20,
+        body: `1. Set a 90-second timer. Explain attention OUT LOUD in pure ELI5 (no jargon) — the spotlight/meeting-room analogy or your own. Record it or write it verbatim after.
+2. Set another 90 seconds. Explain it again in precise technical language: Q/K/V, scaled dot-product, mask, softmax, multi-head.
+3. Grade both against the 4-criteria rubrics in today's tech section. Be harsh — a criterion is only met if a stranger would agree.
+4. Repair the weakest criterion: re-read ONLY the relevant Day 94 section, then redo that register once. One focused rep beats three vague ones.
+5. Save both final versions in your notes — they are your Day 105 stakeholder-explainer and Day 179 interview raw material.`,
+      },
+      {
+        title: 'Pre-flight your GPT for training day',
+        minutes: 15,
+        body: `Run the Day 97 verification harness fresh, as if you did not trust yesterday's self:
+
+1. \`python tinygpt/model.py\` — all three checks (init loss ≈ ln V, leak test, one-batch overfit) print PASS.
+2. Confirm your corpus file loads, and encode→decode round-trips a sample line losslessly (Day 96's invariant).
+3. Time 100 forward+backward steps on a (16, 64) batch. Write the seconds/step in your notes — Day 99 uses it to size the real run.
+4. Commit any fixes. A dirty working tree the night before training day is how "which version did I train?" mysteries begin (Day 81's reproducibility rule).`,
+      },
+    ],
+    practice: [
+      {
+        title: 'Flashcard clearance + weak-day requiz',
+        minutes: 20,
+        body: `1. Clear the entire due deck on the Review page (Days 92–97 cards are due today by design).
+2. Any card missed twice becomes a written entry: the concept, and the one-line cue that would have retrieved it.
+3. Retake the quiz on your two weakest days of the week (lowest scores or most red marks from the blank-page diff). The mastery tracker records the retake — latest score counts, so repairs pay off immediately.
+
+Hints: hesitation counts as a miss — the interview clock and the customer meeting do not accept "give me a second, I knew this".`,
+      },
+    ],
+    project: {
+      title: 'Week 14 closeout: the attention dossier',
+      brief: `Assemble \`week14_dossier.md\` in your journey repo: your corrected blank-page attention computation (photographed or retyped), the block diagram, both graded explanation transcripts with rubric scores, the pre-flight results table (three PASSes + seconds/step), and a 5-line "what I'd teach someone starting this week" summary. This dossier is deliberately portfolio-shaped: it is evidence you understand transformer internals, written in your own words — exactly what a hiring manager skims for and what Day 179's interview prep will mine.`,
+      rubric: [
+        'Blank-page attention computation is present and correct after the diff pass',
+        'Both explanation transcripts scored against all 8 rubric criteria, with the weakest repaired and re-scored',
+        'Pre-flight table shows 3/3 PASS and a measured seconds/step',
+        'Due flashcard deck cleared; twice-missed cards have written cues',
+        'Weakest-two-days quizzes retaken with improved or perfect scores',
+        'Dossier committed to the journey repo',
+      ],
+    },
+    mistakes: [
+      'Rereading instead of recalling. Recognition feels like knowledge; only production under a closed book is. The blank page is uncomfortable precisely because it is working.',
+      'Grading your own explanations gently. The rubric exists to find failures cheaply — a criterion "sort of" met today is a stumble in the interview or the customer meeting.',
+      'Skipping the pre-flight because "it passed yesterday". Files drift, corpora move, working trees dirty. Ten minutes today insures two hours on Day 99.',
+      'Treating review days as rest days. Retrieval, explanation, and verification are the highest-leverage two hours of the week — the lessons only become durable here.',
+      'Explaining attention with an analogy that does not map (e.g. "it\'s like the model thinking hard"). Every analogy element must correspond to a mechanism, or it teaches vibes instead of structure.',
+    ],
+    quiz: [
+      {
+        q: 'In the attention computation, what plays the role of "what I am looking for" vs "what I contain"?',
+        o: [
+          'Value vs Key',
+          'Query ("looking for") vs Key ("what I am, for matching"), with Value as the content actually mixed into the output',
+          'Key vs Query',
+          'Position embedding vs token embedding',
+        ],
+        x: 1,
+        w: 'Q is the probe, K is the advertisement each token exposes for matching, and V is what gets averaged into the output once the Q·K weights are set.',
+        revisit: 94,
+      },
+      {
+        q: 'Why does the transformer need position embeddings at all?',
+        o: [
+          'To make the model bigger',
+          'Because attention\'s weighted average is order-blind — without injected position information, "dog bites man" and "man bites dog" would be identical',
+          'To speed up training',
+          'Because tokenization removes spaces',
+        ],
+        x: 1,
+        w: 'Attention treats its inputs as a set: every position attends by content similarity only. Position embeddings re-introduce order as part of each vector.',
+        revisit: 95,
+      },
+      {
+        q: 'BPE builds its vocabulary by repeatedly…',
+        o: [
+          'splitting the rarest words into characters',
+          'merging the most frequent adjacent symbol pair into a new single token',
+          'looking up words in a dictionary',
+          'removing punctuation',
+        ],
+        x: 1,
+        w: 'BPE starts at characters and greedily merges the most frequent adjacent pair, growing subword tokens that cover common strings efficiently — which is exactly why frequent words are one token and rare ones shatter.',
+        revisit: 96,
+      },
+    ],
+    resources: [
+      { label: 'The Illustrated Transformer — one final pass with fresh eyes', url: 'https://jalammar.github.io/illustrated-transformer/', type: 'article', time: '20 min' },
+      { label: '3Blue1Brown — attention chapter (visual reinforcement)', url: 'https://www.youtube.com/playlist?list=PLZHQObOWTQDNU6R1_67000Dx_ZCJB-3pi', type: 'video', time: '25 min' },
+      { label: 'Karpathy Zero to Hero — GPT video sections you skimmed', url: 'https://karpathy.ai/zero-to-hero.html', type: 'video', time: 'optional 30 min' },
+    ],
+    schedule: [
+      { activity: 'Blank-page rebuild of the week (closed book) + diff', minutes: 30 },
+      { activity: 'Dual-register attention drill with rubric grading', minutes: 20 },
+      { activity: 'Pre-flight the Day 97 model for training day', minutes: 15 },
+      { activity: 'Flashcard clearance + weak-day requizzes', minutes: 20 },
+      { activity: 'Assemble and commit the attention dossier', minutes: 25 },
+      { activity: 'Today\'s quiz', minutes: 10 },
+    ],
+    completion: [
+      'Blank-page rebuild done closed-book, then diffed with every gap repaired',
+      'Both attention explanations scored ≥ 3/4 on their rubrics after repair',
+      'Pre-flight 3/3 PASS with seconds/step recorded',
+      'Due deck cleared and weak-day quizzes retaken',
+      'week14_dossier.md committed',
+    ],
+    connections: {
+      back: 'Everything drilled today was built this week: Day 92\'s geometry, Day 93\'s word2vec, Day 94\'s attention table (redrawn from memory today), Day 95\'s block stack, Day 96\'s BPE merge, Day 97\'s verified build.',
+      forward: 'Day 99 trains the model you pre-flighted tonight. Day 105\'s phase assessment reuses your dual-register explanation, and Day 179\'s interview gym pulls the dossier straight into mock-interview answers.',
+    },
+    flashcards: [
+      { f: 'The three-step review-day protocol?', b: 'Recall (blank page) → verify (diff against notes) → repair (targeted re-study of the gaps).' },
+      { f: 'Q, K, V in one line each?', b: 'Q: what I seek. K: what I advertise for matching. V: what I contribute to the mix.' },
+      { f: 'Why is rereading a trap?', b: 'It produces recognition (familiarity), not recall (production). Only retrieval strengthens retrieval.' },
+      { f: 'Pre-norm block wiring from memory?', b: 'x = x + attn(LN(x)); x = x + ffn(LN(x)).' },
+      { f: 'The 90-second dual-register drill trains what job skill?', b: 'Switching between exec-level and engineer-level explanations — the FDE\'s daily translation work.' },
+    ],
+  },
 ];
