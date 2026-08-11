@@ -3,6 +3,8 @@ import "./design.css";
 import "./globals.css";
 import NavBar from "@/components/NavBar";
 import AskAI from "@/components/AskAI";
+import AuthProvider from "@/components/AuthProvider";
+import SyncProvider from "@/components/SyncProvider";
 
 export const metadata: Metadata = {
   title: "AI Engineer / 180 — from zero to forward-deployed",
@@ -14,9 +16,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-        <NavBar />
-        <main style={{ flex: 1, width: "100%" }}>{children}</main>
-        <AskAI />
+        <AuthProvider>
+          <SyncProvider>
+            <NavBar />
+            <main style={{ flex: 1, width: "100%" }}>{children}</main>
+            <AskAI />
+          </SyncProvider>
+        </AuthProvider>
         <footer
           className="text-muted"
           style={{ borderTop: "1px solid var(--color-divider)", padding: "var(--space-6) var(--space-8)", fontSize: 12, textAlign: "center" }}

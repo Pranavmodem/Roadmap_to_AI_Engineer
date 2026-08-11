@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useJourney } from "@/lib/store";
 import { allDays, phases, getDayByNumber, PROGRAM_DAYS, dayId } from "@/lib/curriculum";
 import { summarizeProgress } from "@/lib/progress";
+import { authEnabled } from "@/lib/supabase";
 
 export default function Dashboard() {
   const hydrated = useJourney((s) => s.hasHydrated);
@@ -13,6 +14,8 @@ export default function Dashboard() {
   const activityDates = useJourney((s) => s.activityDates);
   const srs = useJourney((s) => s.srs);
   const startJourney = useJourney((s) => s.startJourney);
+  const authUser = useJourney((s) => s.authUser);
+  const authReady = useJourney((s) => s.authReady);
 
   const completed = hydrated ? completedDays : [];
   const done = new Set(completed);
@@ -24,6 +27,21 @@ export default function Dashboard() {
 
   return (
     <div className="page" style={{ display: "flex", flexDirection: "column", gap: "var(--space-8)", maxWidth: 1560 }}>
+      {authEnabled && authReady && !authUser && (
+        <div className="blueprint" style={{ padding: "var(--space-4) var(--space-6)", display: "flex", alignItems: "center", gap: "var(--space-4)", flexWrap: "wrap" }}>
+          <i className="corner tl" /><i className="corner tr" /><i className="corner bl" /><i className="corner br" />
+          <span style={{ fontSize: 14 }}>
+            You're browsing as a <b>guest</b> — progress saves to this browser only. A free account syncs
+            your 180 days, quiz mastery, flashcard schedule, and notes across devices (and merges what
+            you've done here).
+          </span>
+          <span style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+            <Link href="/signup" className="btn btn-primary">Create account</Link>
+            <Link href="/login" className="btn btn-secondary">Log in</Link>
+          </span>
+        </div>
+      )}
+
       {/* hero */}
       <section className="hero-grid">
         <div>

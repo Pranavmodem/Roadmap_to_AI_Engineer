@@ -44,6 +44,23 @@ npm run dev        # http://localhost:3000
 That's it. Progress, notes, snippets, and the flashcard scheduler live in your
 browser's localStorage — no account, no database.
 
+### Enable accounts & cross-device sync (optional)
+
+The app ships with the ELI5Code-style login: email **or username** + password,
+signup that collects role/experience/goal, and per-account sync of your full
+learner state (completed days, quiz mastery, flashcard schedule, notes,
+snippets, bookmarks, project checklists). Guests still get everything —
+progress just stays in the browser, and merges into the account on first login.
+
+1. Create a free [Supabase](https://supabase.com) project.
+2. Run `supabase/migrations/0001_auth_profiles_progress.sql` in its SQL editor
+   (creates `profiles` + `user_progress` with RLS, the signup trigger, and the
+   username-login RPCs).
+3. Set env vars (locally in `.env.local`, and in Vercel for the deployed site):
+   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+
+Without these vars the auth UI hides itself and the site runs local-only.
+
 ### Enable the AI teacher (optional)
 
 Copy `.env.example` to `.env.local` and set `AI_API_KEY` (plus optionally

@@ -5,6 +5,12 @@ import { CardState, gradeCard, initialCard } from "./srs";
 export type Mode = "eli5" | "tech";
 export type Theme = "light" | "dark";
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  username: string | null;
+}
+
 export interface QuizResult {
   correct: number;
   total: number;
@@ -23,6 +29,23 @@ export interface Snippet {
 }
 
 interface JourneyState {
+  /** Signed-in Supabase user (null = guest). Never persisted locally —
+   *  Supabase's own session storage is the source of truth. */
+  authUser: AuthUser | null;
+  authReady: boolean;
+  setAuth: (user: AuthUser | null) => void;
+  /** Union-merge remote account state into local (first login / new device). */
+  mergeRemote: (remote: Partial<{
+    completedDays: string[];
+    quizScores: Record<string, QuizResult>;
+    srs: Record<string, CardState>;
+    notes: Record<string, string>;
+    bookmarks: string[];
+    snippets: Snippet[];
+    projectChecks: Record<string, number[]>;
+    activityDates: string[];
+    startDate: string | null;
+  }>) => void;
   /** Global explanation mode: ELI5 analogies vs technical depth */
   mode: Mode;
   theme: Theme;
@@ -69,6 +92,51 @@ const today = () => new Date().toISOString().slice(0, 10);
 export const useJourney = create<JourneyState>()(
   persist(
     (set, get) => ({
+      authUser: null,
+      authReady: false,
+      setAuth: (user) => set({ authUser: user, authReady: true }),
+
+      mergeRemote: (remote) => {
+        const s = get();
+        const union = (a: string[] = [], b: string[] = []) => Array.from(new Set([...a, ...b]));
+        // quiz: latest attempt wins; srs: the card with more reps wins
+        const quizScores = { ...(remote.quizScores ?? {}) };
+        for (const [k, v] of Object.entries(s.quizScores)) {
+          const r = quizScores[k];
+          if (!r || (v.ts ?? "") >= (r.ts ?? "")) quizScores[k] = v;
+        }
+        const srs = { ...(remote.srs ?? {}) };
+        for (const [k, v] of Object.entries(s.srs)) {
+          const r = srs[k];
+          if (!r || (v.reps ?? 0) >= (r.reps ?? 0)) srs[k] = v;
+        }
+        const notes = { ...(remote.notes ?? {}) };
+        for (const [k, v] of Object.entries(s.notes)) {
+          if (v && (!notes[k] || v.length >= notes[k].length)) notes[k] = v;
+        }
+        const projectChecks = { ...(remote.projectChecks ?? {}) };
+        for (const [k, v] of Object.entries(s.projectChecks)) {
+          projectChecks[k] = Array.from(new Set([...(projectChecks[k] ?? []), ...v]));
+        }
+        const byId = new Map<string, Snippet>();
+        for (const sn of [...(remote.snippets ?? []), ...s.snippets]) byId.set(sn.id, sn);
+        const startDate =
+          s.startDate && remote.startDate
+            ? (s.startDate < remote.startDate ? s.startDate : remote.startDate)
+            : s.startDate ?? remote.startDate ?? null;
+        set({
+          completedDays: union(s.completedDays, remote.completedDays),
+          bookmarks: union(s.bookmarks, remote.bookmarks),
+          activityDates: union(s.activityDates, remote.activityDates),
+          quizScores,
+          srs,
+          notes,
+          projectChecks,
+          snippets: Array.from(byId.values()).slice(0, 500),
+          startDate,
+        });
+      },
+
       mode: "eli5",
       theme: "light",
       startDate: null,

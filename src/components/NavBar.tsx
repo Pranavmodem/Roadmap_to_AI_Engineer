@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useJourney } from "@/lib/store";
 import { summarizeProgress } from "@/lib/progress";
+import { getSupabase, authEnabled } from "@/lib/supabase";
 
 const links = [
   { href: "/dashboard", label: "Dashboard" },
@@ -26,6 +27,8 @@ export default function NavBar() {
   const srs = useJourney((s) => s.srs);
   const theme = useJourney((s) => s.theme);
   const toggleTheme = useJourney((s) => s.toggleTheme);
+  const authUser = useJourney((s) => s.authUser);
+  const authReady = useJourney((s) => s.authReady);
   const [q, setQ] = useState("");
 
   // apply theme to <html> so every page (and portals) inherit tokens
@@ -121,6 +124,27 @@ export default function NavBar() {
       >
         {hydrated && theme === "dark" ? "☀️" : "🌙"}
       </button>
+
+      {authEnabled && authReady &&
+        (authUser ? (
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Link href="/account" className="tag tag-accent" style={{ textDecoration: "none" }} title="Account settings">
+              @{authUser.username ?? authUser.email.split("@")[0]}
+            </Link>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: 12 }}
+              onClick={() => getSupabase()?.auth.signOut()}
+            >
+              Sign out
+            </button>
+          </span>
+        ) : (
+          <span style={{ display: "flex", gap: 8 }}>
+            <Link href="/login" className="btn btn-secondary">Log in</Link>
+            <Link href="/signup" className="btn btn-primary">Sign up</Link>
+          </span>
+        ))}
     </header>
   );
 }
