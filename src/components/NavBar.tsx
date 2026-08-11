@@ -84,37 +84,43 @@ export default function NavBar() {
         ))}
       </nav>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (q.trim()) {
-            router.push(`/search?q=${encodeURIComponent(q.trim())}`);
-            setQ("");
-          }
-        }}
-        role="search"
-      >
-        <input
-          className="input"
-          type="search"
-          placeholder="Search lessons…"
-          aria-label="Search lessons"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          style={{ width: 150, minHeight: 32, fontSize: 13 }}
-        />
-      </form>
+      {/* Search + progress chips are members-only when accounts are enabled;
+          in local-only deployments (no Supabase) everyone sees them. */}
+      {(!authEnabled || authUser) && (
+        <>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (q.trim()) {
+                router.push(`/search?q=${encodeURIComponent(q.trim())}`);
+                setQ("");
+              }
+            }}
+            role="search"
+          >
+            <input
+              className="input"
+              type="search"
+              placeholder="Search lessons…"
+              aria-label="Search lessons"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              style={{ width: 150, minHeight: 32, fontSize: 13 }}
+            />
+          </form>
 
-      <div className="hidden md:flex" style={{ alignItems: "center", gap: "var(--space-2)" }}>
-        <span className="tag tag-neutral" title="Consecutive days with activity">🔥 {s.streak}d</span>
-        <span className="tag tag-neutral">{s.xp} XP</span>
-        <span className="tag tag-outline" title="Program mastery: 60% completion + 40% quiz accuracy">mastery {s.programMastery}%</span>
-        {s.dueCards > 0 && (
-          <Link href="/review" className="tag tag-accent" style={{ textDecoration: "none" }} title="Flashcards due for review">
-            {s.dueCards} due
-          </Link>
-        )}
-      </div>
+          <div className="hidden md:flex" style={{ alignItems: "center", gap: "var(--space-2)" }}>
+            <span className="tag tag-neutral" title="Consecutive days with activity">🔥 {s.streak}d</span>
+            <span className="tag tag-neutral">{s.xp} XP</span>
+            <span className="tag tag-outline" title="Program mastery: 60% completion + 40% quiz accuracy">mastery {s.programMastery}%</span>
+            {s.dueCards > 0 && (
+              <Link href="/review" className="tag tag-accent" style={{ textDecoration: "none" }} title="Flashcards due for review">
+                {s.dueCards} due
+              </Link>
+            )}
+          </div>
+        </>
+      )}
 
       <button
         className="btn btn-icon btn-secondary"
