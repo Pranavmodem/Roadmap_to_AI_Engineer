@@ -2358,5 +2358,606 @@ Hints: if outcome and trajectory pass rates are far apart, that gap is the story
       { label: 'τ-bench and agent benchmarks', note: 'Benchmarks like τ-bench score agents on realistic tool-use tasks with user simulation and state checks. Study how they define success states and mock environments — the same design your capstone harness uses at smaller scale.' },
     ],
   },
+  {
+    id: 'd138', day: 138, week: 20, phase: 7, kind: 'lesson',
+    title: 'Human Evaluation',
+    analogy: 'The taste test',
+    objectives: [
+      'Identify when human judgment is the only valid signal and when automation suffices',
+      'Write an annotation protocol precise enough for consistent labels',
+      'Measure inter-rater agreement (Cohen\'s kappa) and act on low agreement',
+      'Design side-by-side (pairwise) human comparisons that avoid bias',
+      'Turn user feedback (thumbs, categories, freeform) into durable eval cases',
+    ],
+    prereqs: [
+      { day: 135, label: 'Judge calibration & Cohen\'s kappa' },
+      { day: 134, label: 'Golden sets & labeling guidelines' },
+      { day: 60, label: 'Sampling — a sample represents a population' },
+    ],
+    eli5: `A food company can measure a soup's salt, temperature, and viscosity with instruments all day — but eventually somebody has to taste it, because "delicious" is not a number any sensor reports. Some qualities of an AI's output are like that: is this explanation genuinely helpful? is this tone right for a grieving customer? is this summary faithful in the way that matters to a lawyer? An LLM judge can approximate these, but the ground truth — the thing you calibrate the judge AGAINST — comes from people.
+
+The catch is that people are noisy instruments too. Ask two tasters and one calls it perfect, the other bland. So human evaluation is not "just ask someone"; it is a small science: give tasters a written protocol so they judge the same way, have several taste the same bowls, and measure how often they agree. If they don't agree, the fault is usually your recipe for judging, not the soup. And every thumbs-down a real user leaves is a taster volunteering data — captured well, it becomes tomorrow's exam question.`,
+    why: `Automated metrics and LLM judges are calibrated against human labels (Day 135) — so somewhere a human must provide ground truth, and doing it well is a distinct skill. For subjective, high-stakes, or novel qualities (helpfulness, safety nuance, brand voice, domain correctness a generalist judge can't assess), humans are the gold standard and the source of the labels everything else is measured against. FDEs run human-eval rounds with customers to establish "what good looks like" in writing. And the feedback pipeline — turning production thumbs-downs into eval cases — is the data flywheel (Day 143) that keeps a system improving. Sloppy human eval (vague protocol, one rater, no agreement check) produces ground truth that is quietly wrong, poisoning every metric downstream.`,
+    tech: `### When humans are required
+
+Reach for human eval when: the quality is subjective or contextual (tone, helpfulness, cultural fit); stakes are high enough that judge error is unacceptable; the domain needs expertise a general LLM judge lacks (medical, legal, your customer's niche); or you are establishing the ground truth to calibrate a cheaper automated grader. Otherwise, automate — human eval is slow and expensive; spend it where it is the only valid signal, and use it to bootstrap judges for the rest.
+
+### Annotation protocol
+
+The protocol is the experiment design. It specifies: the exact question ("Is this answer helpful AND grounded?" not "is this good?"), the label space (binary/ordinal/categorical — prefer few, well-defined levels), decision rules for hard cases (partials, refusals, ties), positive and negative examples of each label, and instructions to prevent order/anchoring effects. A protocol that two annotators read and then label a batch the same way is good; divergence means the protocol, not the annotators, needs work.
+
+### Inter-rater agreement
+
+Have multiple people label overlapping items and measure agreement. Raw agreement is inflated on skewed classes; use **Cohen's kappa** (two raters) or Fleiss' kappa (more), the same chance-corrected measure you computed for judges on Day 135 (κ<0.4 poor, 0.4–0.6 moderate, 0.6–0.8 substantial). Low kappa is a finding: your task is underspecified, the categories overlap, or raters need training — fix the protocol and re-measure. Only labels with acceptable agreement should become golden ground truth.
+
+### Pairwise and feedback UX
+
+Absolute quality is hard for humans to score consistently; **side-by-side pairwise** ("which of A/B is better?") is easier and more reliable — randomize left/right to kill position bias (humans have it too), and blind raters to which system produced which. In production, feedback UX is eval-data collection: thumbs up/down (cheap, sparse signal), category tags (why it was bad — wrong, unhelpful, unsafe), and freeform (rich, unstructured). Design it to capture the input, output, and context so a thumbs-down becomes a reproducible eval case, then cluster the failures (Day 143) into new golden-set entries. Sampling matters: you cannot label everything, so sample representatively (Day 60) — including deliberately oversampling rare, high-severity slices.`,
+    viz: null,
+    guided: [
+      {
+        title: 'Run a two-rater agreement study',
+        minutes: 25,
+        body: `1. Take 15 answers from your capstone golden-set run. Write \`human_eval/protocol.md\`: the exact question, a binary HELPFUL-AND-GROUNDED / NOT label, decision rules, and one positive + one negative example.
+2. Rater A is you. Recruit rater B (a friend, or role-play a second pass a day later with only the protocol in front of you — imperfect but instructive). Both label all 15 independently, no discussion.
+3. Run \`human_eval/agreement.py\`: compute raw agreement and Cohen's kappa (reuse Day 135's function). Print the items you disagreed on.
+4. Read every disagreement. For each, decide: was the protocol ambiguous, or did a rater slip? Revise the protocol to resolve the ambiguity (add a decision rule), then re-label just those items.
+5. Recompute kappa. Write two sentences: did tightening the protocol raise agreement? The lesson — low agreement is usually a protocol bug, not a people bug.`,
+        code: `def cohen_kappa(a, b):
+    n = len(a); labels = set(a) | set(b)
+    po = sum(x == y for x, y in zip(a, b)) / n
+    pe = sum((a.count(l) / n) * (b.count(l) / n) for l in labels)
+    return (po - pe) / (1 - pe) if pe != 1 else 1.0, po
+
+rater_a = ["Y","Y","N","Y","Y","N","Y","N","Y","Y","N","Y","Y","N","Y"]
+rater_b = ["Y","Y","N","Y","N","N","Y","N","Y","Y","Y","Y","Y","N","N"]
+kappa, po = cohen_kappa(rater_a, rater_b)
+print(f"raw agreement {po:.0%}  kappa {kappa:.2f}")
+disagreements = [i for i, (x, y) in enumerate(zip(rater_a, rater_b)) if x != y]
+print("disagreed on items:", disagreements, "-> read these, fix the protocol")
+# kappa < 0.4: protocol likely underspecified. Revise decision rules, relabel,
+# recompute. Only labels with acceptable agreement become ground truth.`,
+      },
+      {
+        title: 'Feedback-to-eval-case pipeline',
+        minutes: 20,
+        body: `1. Create \`human_eval/feedback.py\` modeling a production feedback capture: a function that, on a thumbs-down, records the full context — question, retrieved chunks, answer, a category tag (wrong / unhelpful / unsafe / off-topic), and optional freeform.
+2. Feed it 8 simulated thumbs-down events with varied categories.
+3. Cluster them by category and print counts — this is the raw material of the data flywheel (Day 143): the dominant category tells you where to invest.
+4. Convert the three most severe/representative into golden-set cases (question + criteria) appended to your Day 134 \`golden_set.jsonl\`. A thumbs-down that does not become a test case is a lesson thrown away.
+5. Note what you must capture at feedback time to make a case reproducible (inputs + retrieved context + version), and add any missing field to the capture schema.`,
+        code: `import json
+from collections import Counter
+
+def capture(question, chunks, answer, category, note="", version="v1"):
+    return {"question": question, "retrieved": chunks, "answer": answer,
+            "category": category, "note": note, "version": version}
+
+feedback = [
+    capture("Refund window?", ["refunds..."], "Maybe 60 days?", "wrong"),
+    capture("Return shipping?", [], "I don't have that info.", "unhelpful"),
+    capture("CEO home address?", [], "It is 12 Elm St.", "unsafe"),
+    capture("Store hours?", ["hours 9-5"], "9 to 5.", "off-topic"),  # mis-tagged, review
+    capture("Refund window?", ["refunds..."], "Two weeks.", "wrong"),
+]
+print(Counter(f["category"] for f in feedback))   # where to invest
+
+# promote the worst offenders to golden-set cases:
+def to_golden_case(fb, cid):
+    return {"id": cid, "tags": ["from-feedback", fb["category"]],
+            "question": fb["question"],
+            "must_not_include": ["12 Elm", "60 days", "Two weeks"]}
+with open("evals/golden_set.jsonl", "a") as f:
+    for i, fb in enumerate(fb for fb in feedback if fb["category"] in ("wrong", "unsafe")):
+        f.write(json.dumps(to_golden_case(fb, f"FB{i:02d}")) + "\\n")`,
+      },
+    ],
+    practice: [
+      {
+        title: 'Design a blinded pairwise human eval',
+        minutes: 20,
+        body: `Design (and, if you have a second person, run) a side-by-side human eval comparing two versions of your capstone's answers — e.g., before vs after a prompt change. Produce \`human_eval/pairwise-design.md\` specifying: how you randomize which side is A/B per item (kill position bias), how you blind the rater to which system is which, the exact question ("which answer is more helpful and grounded, or tie?"), how many items and why (sampling — Day 60), and how you will aggregate (win rate with ties, and note you'll put error bars on it tomorrow).
+
+Then, on 10 items (real or simulated raters), collect verdicts and compute the win rate for version B. State whether the sample is big enough to conclude anything — foreshadowing Day 139's honest answer (probably not at n=10).
+
+Hints: the two silent killers are position bias (randomize sides) and unblinding (a rater who knows which is "the new one" roots for it). A pairwise design that ignores either produces confident garbage.`,
+      },
+    ],
+    project: {
+      title: 'Human-eval round + calibration ground truth for the capstone',
+      brief: `Run a real (even if small) human-eval round on the capstone and commit \`evals/human/\`: (1) \`protocol.md\` — the annotation protocol, precise enough to reproduce; (2) labels from ≥ 2 raters on ≥ 15 overlapping items with a computed Cohen's kappa and a note on how you improved the protocol if kappa was low; (3) the resulting human ground-truth labels — these become the calibration set your Day 135 judge is measured against and the seed of the Day 140 harness's 10 human labels; (4) a feedback-capture schema and ≥ 3 golden cases promoted from simulated thumbs-downs. The deliverable proves you can produce trustworthy ground truth, not just consume metrics.`,
+      rubric: [
+        'Annotation protocol is specific enough for a second person to reproduce labels',
+        '≥ 2 raters labeled ≥ 15 overlapping items; Cohen\'s kappa computed and reported',
+        'Low agreement (if any) was diagnosed as a protocol issue and re-measured after a fix',
+        'Human ground-truth labels saved in a form the Day 135 judge can be calibrated against',
+        'Feedback schema captures enough context to reproduce a case; ≥ 3 cases promoted to the golden set',
+        'Committed to the capstone repo',
+      ],
+    },
+    mistakes: [
+      'Using one annotator. A single rater\'s labels have unknown reliability; multiple raters plus a kappa tell you whether the ground truth is trustworthy at all.',
+      'Reporting raw agreement on skewed labels. 90% "helpful" makes near-random raters look aligned; Cohen\'s kappa is chance-corrected (Day 135/59).',
+      'Blaming raters for low agreement. Divergence usually means the protocol is ambiguous — fix the decision rules and examples, then re-measure.',
+      'Absolute 1–10 human scores. Humans are inconsistent at absolute scales; blinded, position-randomized pairwise comparisons are far more reliable.',
+      'Unblinded or unrandomized comparisons. Raters favor the side they know is "new," and the first-shown option — both silently bias the win rate.',
+      'Collecting thumbs-downs and never mining them. Feedback that does not become clustered failures and new eval cases is a wasted flywheel (Day 143).',
+    ],
+    quiz: [
+      {
+        q: 'Two annotators label 100 items "safe/unsafe"; 95 are safe. They agree on 93 items. Raw agreement is 93%, but you should also compute…',
+        o: [
+          'Nothing — 93% is great',
+          'Cohen\'s kappa, because with 95% one class, high raw agreement can occur by chance; kappa reveals whether they truly agree beyond the base rate',
+          'The mean',
+          'Precision only',
+        ],
+        x: 1,
+        w: 'On skewed classes, raw agreement is inflated by both raters defaulting to the majority. Kappa corrects for chance and can be low even at 93% raw agreement — the same base-rate trap as judges (Day 135).',
+        revisit: 138,
+      },
+      {
+        q: 'Your two raters have kappa 0.3 (poor). The best first response is…',
+        o: [
+          'Fire a rater',
+          'Average their labels anyway',
+          'Treat it as a protocol problem — read the disagreements, tighten the question/decision rules/examples, retrain, and re-measure',
+          'Conclude the task is impossible',
+        ],
+        x: 2,
+        w: 'Low agreement most often means the labeling task is underspecified. Improving the protocol (clearer question, decision rules, examples) usually raises kappa; only then are the labels usable as ground truth.',
+        revisit: 138,
+      },
+      {
+        q: 'Why prefer blinded, side-by-side pairwise comparison over asking humans for an absolute 1–10 score?',
+        o: [
+          'It is faster to compute',
+          'Humans are more consistent at relative judgments than absolute scales; blinding + randomized sides removes system-identity and position biases',
+          'Absolute scores are always wrong',
+          'Pairwise needs no protocol',
+        ],
+        x: 1,
+        w: 'Relative "which is better" is more reliable than absolute scoring for people, and blinding plus left/right randomization strips the biases that otherwise inflate the newer/first option.',
+        revisit: 138,
+      },
+    ],
+    resources: [
+      { label: 'Hamel Husain — Your AI Product Needs Evals (annotation & review)', url: 'https://hamel.dev/blog/posts/evals/', type: 'article', time: '25 min' },
+      { label: 'LangSmith — Evaluation Concepts (human/annotation)', url: 'https://docs.langchain.com/langsmith/evaluation-concepts', type: 'docs', time: '20 min' },
+      { label: 'Eugene Yan — Task-Specific LLM Evals', url: 'https://eugeneyan.com/writing/evals/', type: 'article', time: '20 min' },
+    ],
+    schedule: [
+      { activity: 'Spaced-rep: due cards (agent evals, RAG eval)', minutes: 10 },
+      { activity: 'ELI5 + tech read; when humans are the only valid judge', minutes: 20 },
+      { activity: 'Guided: two-rater agreement study + feedback pipeline', minutes: 45 },
+      { activity: 'Practice: design a blinded pairwise eval', minutes: 20 },
+      { activity: 'Project: human-eval round + ground truth', minutes: 15 },
+      { activity: 'Quiz + flashcards', minutes: 10 },
+    ],
+    completion: [
+      'Annotation protocol written and used by ≥ 2 raters on ≥ 15 items',
+      'Cohen\'s kappa computed; low agreement diagnosed and re-measured after a protocol fix',
+      'Feedback pipeline turns simulated thumbs-downs into ≥ 3 golden cases',
+      'human/ ground-truth committed for judge calibration',
+      'Quiz ≥ 2/3',
+    ],
+    connections: {
+      back: 'This produces the ground truth that calibrates the Day 135 judge, extends Day 134\'s labeling guidelines, and applies Day 60\'s sampling and Day 59\'s base-rate reasoning to human labels.',
+      forward: 'Day 139 puts confidence intervals on the win rates and pass rates you collected here; Day 140 requires 10 human labels to calibrate the harness\'s judge; Day 143 builds the production feedback flywheel this previews.',
+    },
+    flashcards: [
+      { f: 'When is human eval the right tool?', b: 'Subjective/high-stakes/expert-domain qualities, and to create the ground truth that calibrates cheaper automated judges.' },
+      { f: 'What is an annotation protocol?', b: 'The experiment design: exact question, defined label space, decision rules for hard cases, and labeled examples — reproducible by a second rater.' },
+      { f: 'Why measure inter-rater agreement with kappa?', b: 'Multiple raters + chance-corrected kappa reveal whether labels are trustworthy; low kappa means the protocol is underspecified, not the raters.' },
+      { f: 'Why blinded pairwise over absolute human scores?', b: 'Humans judge relative better than absolute; blinding + randomized sides remove system-identity and position bias.' },
+      { f: 'How does user feedback become eval data?', b: 'Capture input+output+context on thumbs-down, cluster by category, promote representative failures into golden-set cases (the flywheel).' },
+    ],
+    deepDive: [
+      { label: 'Chatbot Arena and preference collection', note: 'Large-scale blinded pairwise human preference (Elo from A/B votes) is how open leaderboards rank models. Study its randomization and aggregation as the industrial-scale version of today\'s pairwise design.' },
+    ],
+  },
+  {
+    id: 'd139', day: 139, week: 20, phase: 7, kind: 'lesson',
+    title: 'Statistics for Evals',
+    analogy: 'Error bars or it didn\'t happen',
+    objectives: [
+      'Explain why a single eval run is a noisy sample, not a fixed truth',
+      'Compute a confidence interval on a pass rate with the bootstrap, in runnable Python',
+      'Use paired comparisons to detect small but real differences between two systems',
+      'Estimate the minimum sample size to distinguish a target effect',
+      'Set regression thresholds that separate real drops from run-to-run noise',
+    ],
+    prereqs: [
+      { day: 60, label: 'Sampling, standard error & bootstrap CIs' },
+      { day: 61, label: 'Hypothesis tests & A/B pitfalls' },
+      { day: 134, label: 'Golden sets & pass rates' },
+    ],
+    eli5: `You score two prompts on your eval: A gets 82%, B gets 85%. Ship B, right? Not yet. Those percentages are measured on a sample of, say, 40 questions — and if you'd picked 40 slightly different questions, or the model had sampled tokens a little differently, the numbers would wobble. The 85% is not a fact; it is a dart that landed at 85, thrown by a slightly shaky hand. The real question is whether the hand is shaky enough that 82 and 85 are the same throw.
+
+Error bars answer that. Instead of "85%", you report "85%, give or take 6" — and once you see that A's range (76–88) and B's range (79–91) overlap heavily, "B is better" evaporates. Maybe it is; you just can't tell from 40 questions. This is the discipline that separates people who move numbers from people who move NOISE and congratulate themselves. Every eval result is a measurement with uncertainty, and a result reported without its uncertainty is half a result — often the wrong half.`,
+    why: `This is where most eval work quietly falls apart: teams celebrate a prompt change that moved the score from 82% to 85% on 40 cases, ship it, and the "improvement" was noise — next week it's 81%. An engineer who reports eval deltas with confidence intervals, uses paired tests to find real effects, and knows their 40-case set can't distinguish a 3-point difference is dramatically more credible than one waving a bare percentage. For the capstone's regression gate (Day 141), you MUST separate a real quality drop from run-to-run jitter, or the gate either blocks good changes or waves through bad ones. "Error bars or it didn't happen" is the whole professional posture.`,
+    tech: `An eval score is a statistic computed on a sample, so it has sampling error — the exact Day 60 story, now applied to pass rates.
+
+### Confidence intervals on a pass rate
+
+A pass rate is a proportion; its uncertainty shrinks with sample size (roughly as 1/√n). For a quick analytic interval, the normal approximation gives ±1.96·√(p(1−p)/n), but it misbehaves near 0/1 and small n — prefer the **bootstrap** (Day 60): resample your per-case pass/fail results with replacement thousands of times, recompute the pass rate each time, and take the 2.5th and 97.5th percentiles. It needs no distributional assumption and handles any metric (pass rate, mean faithfulness, win rate). A 40-case eval typically yields a CI around ±12–15 points — wide enough that many "improvements" vanish inside it.
+
+### Paired comparisons find small real effects
+
+Comparing two systems by their independent CIs is wasteful and can hide real differences. Since both systems run on the SAME cases, compare them **paired**: look at per-case differences (did B beat A on this case?). Much of the case-to-case variance (some questions are just hard) cancels, so a paired analysis detects smaller true effects than comparing two overlapping CIs suggests. Bootstrap the paired difference, or use McNemar's test for paired pass/fail, and report the CI of the DELTA — if it excludes 0, the effect is real at that confidence.
+
+### Sample size and thresholds
+
+Before running, estimate the n needed to detect the effect you care about: distinguishing a 5-point difference reliably needs hundreds of cases, not 40. If your set is small, you can only detect large effects — state that honestly rather than over-reading small ones. For regression gates (Day 141), set the threshold using the noise band: if your CI half-width is ~10 points, a gate that fails on any 3-point drop will fire constantly on noise (false alarms) and erode trust; gate on drops beyond the noise band, or reduce noise (more cases, fixed seeds, multiple runs averaged). Non-determinism is part of the noise: temperature and sampling make repeated runs differ, so for stochastic systems run each case several times and average, and report across-run variance too.`,
+    viz: 'sampling-ci',
+    guided: [
+      {
+        title: 'Bootstrap a confidence interval on your pass rate',
+        minutes: 20,
+        body: `1. Create \`eval_stats/bootstrap.py\` from the starter. Take a real vector of per-case pass/fail (1/0) from your Day 134 eval run (or the provided example).
+2. Implement the bootstrap: resample the results with replacement B=10,000 times, recompute the mean each time, and take the 2.5/97.5 percentiles for a 95% CI.
+3. Print "pass rate X% (95% CI: L–U)". Compare the CI width at n=20, 40, 100, 400 by truncating/replicating your data — watch the interval shrink like 1/√n.
+4. Also compute the normal-approximation interval and compare; note where they diverge (small n, p near 0/1).
+5. Write one sentence: given your actual set size, what is the smallest quality difference you could even claim to detect?`,
+        code: `import random
+
+def bootstrap_ci(results, B=10000, alpha=0.05):
+    n = len(results)
+    means = []
+    for _ in range(B):
+        sample = [results[random.randrange(n)] for _ in range(n)]
+        means.append(sum(sample) / n)
+    means.sort()
+    lo = means[int((alpha / 2) * B)]
+    hi = means[int((1 - alpha / 2) * B)]
+    return sum(results) / n, lo, hi
+
+# per-case pass(1)/fail(0) from your golden-set run:
+results = [1,1,0,1,1,1,0,1,1,0, 1,1,1,0,1,1,0,1,1,1,
+           1,0,1,1,1,0,1,1,0,1, 1,1,1,1,0,1,1,0,1,1]   # 40 cases
+p, lo, hi = bootstrap_ci(results)
+print(f"pass rate {p:.0%}  95% CI [{lo:.0%}, {hi:.0%}]  half-width ~{(hi-lo)/2:.0%}")
+# truncate to n=20 and replicate to n=400 to watch the CI shrink ~1/sqrt(n)
+for n in (20, 40, 100, 400):
+    data = (results * ((n // len(results)) + 1))[:n]
+    _, l, h = bootstrap_ci(data, B=3000)
+    print(f"n={n:3d}: CI half-width ~{(h-l)/2:.0%}")`,
+      },
+      {
+        title: 'Paired comparison of two systems',
+        minutes: 25,
+        body: `1. Create \`eval_stats/paired.py\`. You have per-case pass/fail for system A and system B on the SAME golden cases (starter provides vectors; or use your real before/after run from Day 134).
+2. Compute each system's marginal pass rate and its bootstrap CI. Notice the CIs overlap — the naive read says "no difference."
+3. Now go paired: bootstrap the per-case DIFFERENCE (B−A), and report the delta's mean and 95% CI. Because shared case-difficulty cancels, this CI can exclude 0 even when the marginal CIs overlap.
+4. Add McNemar's exact-ish check: count cases where A passed but B failed (b) vs B passed but A failed (c); the effect lives entirely in the discordant pairs. Print b, c and the implied direction.
+5. Write the honest verdict: is B's improvement real at 95%, or is the delta CI straddling 0 (inconclusive — you need more cases, per the sample-size note)?`,
+        code: `import random
+
+def paired_delta_ci(a, b, B=10000, alpha=0.05):
+    diffs = [bi - ai for ai, bi in zip(a, b)]     # per-case B - A
+    n = len(diffs); boot = []
+    for _ in range(B):
+        s = [diffs[random.randrange(n)] for _ in range(n)]
+        boot.append(sum(s) / n)
+    boot.sort()
+    return (sum(diffs) / n,
+            boot[int((alpha/2)*B)], boot[int((1-alpha/2)*B)])
+
+A = [1,1,0,1,1,1,0,1,1,0, 1,1,1,0,1,1,0,1,1,1]   # system A per-case
+B = [1,1,1,1,1,1,0,1,1,1, 1,1,1,0,1,1,1,1,1,1]   # system B per-case
+mean, lo, hi = paired_delta_ci(A, B)
+print(f"delta (B-A) {mean:+.0%}  95% CI [{lo:+.0%}, {hi:+.0%}]")
+b = sum(ai == 1 and bi == 0 for ai, bi in zip(A, B))   # A pass, B fail
+c = sum(ai == 0 and bi == 1 for ai, bi in zip(A, B))   # B pass, A fail
+print(f"McNemar discordants: A>B={b}  B>A={c}  -> effect is in these pairs")
+print("real at 95%?" , "yes" if lo > 0 or hi < 0 else "INCONCLUSIVE (CI spans 0)")`,
+      },
+    ],
+    practice: [
+      {
+        title: 'Adjudicate a real eval delta honestly',
+        minutes: 20,
+        body: `Take a real before/after from your capstone (a prompt or chunking change from Day 134/136) and write \`eval_stats/verdict.md\`. Report: each version's pass rate WITH a bootstrap CI, the paired delta with its CI, the discordant-pair counts, and a one-line ship/don't-ship/inconclusive verdict that follows from the statistics — not from the point estimate.
+
+Then answer the uncomfortable question: given your current set size and its CI half-width, what is the minimum improvement you could actually detect, and how many more cases would you need to detect a 3-point gain? (Rough it: to halve the CI, quadruple n.) If the answer is "I can't conclude anything from 40 cases," write that — it is the correct, senior answer.
+
+Hints: an improvement whose paired-delta CI includes 0 is not an improvement you can claim. "Inconclusive, need ~4× the cases" beats a confident lie.`,
+      },
+    ],
+    project: {
+      title: 'Statistical rigor for the capstone eval report',
+      brief: `Upgrade your capstone's \`evals/RESULTS.md\` (and add \`evals/eval_stats/\`) so every reported number carries uncertainty. Requirements: (1) every pass rate / mean-faithfulness / win-rate reported with a bootstrap 95% CI; (2) any A-vs-B claim backed by a paired analysis with the delta's CI and discordant counts, not two overlapping marginal CIs; (3) a stated minimum detectable effect for your current golden-set size, and the n you'd need for a 3-point resolution; (4) a proposed regression-gate threshold (for Day 141) chosen to sit OUTSIDE the noise band, with the reasoning. If your system is stochastic, run each case ≥ 3 times and report across-run variance. This turns your eval from a number into a defensible measurement.`,
+      rubric: [
+        'Every headline metric reported with a bootstrap 95% CI',
+        'A-vs-B comparisons use a paired analysis (delta CI + discordant pairs), not overlapping marginals',
+        'Minimum detectable effect stated for the current n, with the n needed for a 3-point resolution',
+        'Proposed regression threshold sits outside the measured noise band, with justification',
+        'Stochastic systems: ≥ 3 runs/case with across-run variance reported',
+        'Committed to the capstone repo',
+      ],
+    },
+    mistakes: [
+      'Reporting a bare pass rate. A number without a CI hides its sampling error; readers over-trust a point estimate that could swing 12 points on a re-sample.',
+      'Declaring B > A from overlapping marginal CIs — or from a bare 82% vs 85%. Use a PAIRED comparison; shared case difficulty cancels and reveals (or refutes) the real effect.',
+      'Over-reading a small set. 40 cases can only distinguish large effects; claiming a 3-point win from 40 cases is noise worship. State the minimum detectable effect.',
+      'Regression gates tighter than the noise band. If the CI half-width is 10 points, failing on a 3-point drop cries wolf constantly and trains everyone to ignore the gate.',
+      'Ignoring run-to-run non-determinism. Temperature/sampling make repeats differ; for stochastic systems, average multiple runs and report across-run variance too.',
+      'Confusing statistical significance with importance. A real but tiny gain may not be worth a cost/latency regression — significance is necessary, not sufficient (Day 61).',
+    ],
+    quiz: [
+      {
+        q: 'Prompt A scores 82% and prompt B 85% on the same 40-case eval. Before shipping B you should…',
+        o: [
+          'Ship B — it is 3 points higher',
+          'Compute a paired delta with a confidence interval; on 40 cases the CI likely spans 0, making the difference inconclusive',
+          'Average the two',
+          'Add more prompts',
+        ],
+        x: 1,
+        w: 'A 3-point gap on 40 paired cases is well within sampling noise. A paired bootstrap of the per-case difference, with its CI, tells you whether the effect is real — usually "inconclusive" at this n.',
+        revisit: 139,
+      },
+      {
+        q: 'Why does a PAIRED comparison detect smaller true differences than comparing each system\'s independent confidence interval?',
+        o: [
+          'It uses more data',
+          'Both systems run on the same cases, so case-to-case difficulty variance cancels in the per-case difference, leaving a tighter estimate of the true effect',
+          'Paired tests ignore variance',
+          'It does not — they are equivalent',
+        ],
+        x: 1,
+        w: 'Much of the spread in marginal scores is "some questions are just hard," which is shared by both systems and cancels when you look at per-case differences. That is why paired analysis is more sensitive.',
+        revisit: 139,
+      },
+      {
+        q: 'Your eval\'s 95% CI half-width is about ±10 points. A sensible regression gate for CI (Day 141) fails the build when the score drops by…',
+        o: [
+          'Any amount below the previous score',
+          '1 point or more',
+          'More than the noise band (e.g., beyond ~10 points, or reduce noise first with more cases / fixed seeds / averaged runs)',
+          'Exactly the average',
+        ],
+        x: 2,
+        w: 'Gating inside the noise band fires on random jitter and trains people to ignore it. Gate beyond the measured noise, or first shrink the noise (larger n, seeds, averaged runs) so a tighter gate is meaningful.',
+        revisit: 139,
+      },
+    ],
+    resources: [
+      { label: 'Seeing Theory — Confidence intervals & sampling (visual)', url: 'https://seeing-theory.brown.edu/', type: 'course', time: '20 min' },
+      { label: 'Hamel Husain — Your AI Product Needs Evals', url: 'https://hamel.dev/blog/posts/evals/', type: 'article', time: '20 min' },
+      { label: 'Khan Academy — Statistics & Probability (CIs, significance)', url: 'https://www.khanacademy.org/math/statistics-probability', type: 'course', time: '25 min' },
+    ],
+    schedule: [
+      { activity: 'Spaced-rep: due cards (human eval, judges) + recall Day 60 bootstrap', minutes: 10 },
+      { activity: 'ELI5 + tech read; why one eval run is a noisy sample', minutes: 20 },
+      { activity: 'Guided: bootstrap CI + paired comparison', minutes: 45 },
+      { activity: 'Practice: adjudicate a real eval delta', minutes: 20 },
+      { activity: 'Project: statistical rigor for the eval report', minutes: 15 },
+      { activity: 'Quiz + flashcards', minutes: 10 },
+    ],
+    completion: [
+      'Bootstrap CI computed on a real pass rate; CI shrinkage with n observed',
+      'Paired delta CI + discordant counts computed for a real A/B change',
+      'Verdict written that follows the statistics (including "inconclusive" when true)',
+      'Eval report upgraded so every metric carries a CI; regression threshold proposed outside the noise band',
+      'Quiz ≥ 2/3',
+    ],
+    connections: {
+      back: 'This is Day 60\'s bootstrap and standard error and Day 61\'s A/B discipline applied to the pass rates from Days 134–137. The base-rate humility echoes Day 59.',
+      forward: 'Tomorrow (Day 140) every capstone eval number ships with a CI. Day 141\'s regression gate uses the noise-band threshold you set here, and Day 145\'s drift monitoring watches these intervals move over time in production.',
+    },
+    flashcards: [
+      { f: 'Why does an eval score need error bars?', b: 'It is a statistic on a finite sample with sampling error; a bare point estimate hides swings that make small "improvements" pure noise.' },
+      { f: 'How to get a CI on a pass rate without assumptions?', b: 'Bootstrap: resample per-case results with replacement thousands of times, recompute the rate, take 2.5/97.5 percentiles.' },
+      { f: 'Why compare two systems paired, not by separate CIs?', b: 'Same cases → shared case-difficulty cancels in per-case differences, detecting smaller real effects than overlapping marginal CIs suggest.' },
+      { f: 'How does CI width scale with sample size?', b: 'Roughly 1/√n — to halve the interval, quadruple the number of cases.' },
+      { f: 'How to set a regression-gate threshold?', b: 'Outside the measured noise band (CI half-width); gating inside it cries wolf on jitter. Or reduce noise with more cases / seeds / averaged runs.' },
+    ],
+    deepDive: [
+      { label: 'McNemar\'s test and paired proportions', note: 'For paired pass/fail, the effect lives entirely in the discordant pairs (A-pass/B-fail vs B-pass/A-fail). McNemar\'s test formalizes when their imbalance is significant — the classic tool for before/after on the same eval set.' },
+    ],
+  },
+  {
+    id: 'd140', day: 140, week: 20, phase: 7, kind: 'review',
+    title: 'Week 20 Checkpoint: Capstone Eval Harness',
+    analogy: 'The exam is now automated',
+    objectives: [
+      'Recall the Week 20 eval toolkit (golden sets, judges, RAG/agent metrics, statistics) from memory',
+      'Assemble a single automated harness that scores retrieval AND answers on the capstone',
+      'Calibrate the harness\'s judge against 10 human labels and report agreement',
+      'Produce an eval report with confidence intervals and an honest bottleneck verdict',
+      'Wire the harness so it is ready to become the Day 141 CI regression gate',
+    ],
+    prereqs: [
+      { day: 134, label: 'Golden sets & the eval loop' },
+      { day: 136, label: 'RAG evaluation metrics' },
+      { day: 139, label: 'Statistics & confidence intervals for evals' },
+    ],
+    eli5: `All week you forged individual instruments: a golden set (the exam), a calibrated judge (a fair grader), retrieval and generation metrics (separate grades for finding vs writing), agent scorers, and statistics (error bars). Today you bolt them into one machine and press a button. You feed in your Docs-QA capstone; out comes a report card that grades the whole system the way a real examiner would — and does it again, identically, every time you change anything.
+
+This is the payoff of the whole phase. Before this week, "is it good?" was answered by chatting with it and feeling optimistic. Now it is answered by a number, with error bars, broken down into "retrieval is the weak part, not generation," calibrated against real human judgment. The exam that used to require you to sit and grade by hand now runs while you get coffee — and tomorrow you'll rig it to a tripwire so a bad change can't even reach production. A review day, so first you rebuild the week's ideas from a blank page: if you can't reconstruct the eval-driven loop and what kappa protects against, you learned recognition, not the skill.`,
+    why: `A capstone with an automated eval harness is a fundamentally different portfolio piece than one without — it is the single clearest signal that you build like a 2026 AI engineer rather than a demo-hacker. In interviews, "walk me through how you evaluate your system" is answered by showing this harness. For an FDE, it is the artifact that lets you tell a customer "here is our quality number, here is its uncertainty, here is where it's weak, and here is the gate that keeps it from regressing." Everything after this — CI gates (D141), tracing (D142), drift (D145), the hardening finale (D177) — assumes this harness exists.`,
+    tech: `Today integrates Week 20 into one runnable system and drills it from memory.
+
+### The harness architecture
+
+- **Data**: the golden set (Day 134) — now ≥ 40 cases covering every topic, all four intents, negatives, and the red-team cases from Day 133 and feedback-promoted cases from Day 138. Versioned in the repo.
+- **Retrieval scoring** (Day 136): context precision/recall per case from chunk-relevance labels.
+- **Answer scoring**: programmatic checks (Day 134) where possible, the calibrated LLM judge (Day 135) for open-ended quality and faithfulness (Day 136), each judge output tied to its calibration number.
+- **Agent scoring** (Day 137) if your capstone has an agentic path: outcome + trajectory + cost/latency.
+- **Statistics** (Day 139): every reported metric with a bootstrap CI; A/B changes via paired deltas.
+- **Report**: mean metrics with CIs, per-case failures, a retrieval-vs-generation bottleneck verdict, and the judge's agreement/kappa so every judged number is trustworthy.
+
+### The checkpoint bar
+
+The Day 140 project requires: a ≥ 40-case golden set; an automated harness scoring retrieval AND answers; the judge calibrated on ≥ 10 human labels with agreement reported; and a written eval report with confidence intervals. Structurally the harness must be callable as one command (\`python -m evals.harness\`) returning a machine-readable summary — because tomorrow that exact call becomes a CI gate (Day 141), and a harness you can't invoke headless can't gate anything.
+
+### Recall (this is a review day)
+
+From a blank page, reconstruct: the eval-driven development loop; the four golden-set intents and why negatives matter; the three LLM-judge biases and their mitigations; why raw agreement needs kappa; the retrieval-vs-generation decomposition and its 2×2 diagnosis; outcome vs trajectory; and why a bare pass rate needs a confidence interval. Then diff against Days 134–139 and turn every gap into a flashcard. Recall you can't reproduce is the material you only recognized.`,
+    viz: 'eval-loop',
+    guided: [
+      {
+        title: 'Closed-book recall of Week 20',
+        minutes: 15,
+        body: `Close all notes. On a blank page, reproduce:
+1. The eval-driven development loop, in one line.
+2. The four golden-set intents and why negative/refusal cases are non-negotiable.
+3. The three LLM-judge biases and one mitigation each.
+4. Why you report Cohen's kappa, not just raw agreement.
+5. Context precision vs recall, and the retrieval-vs-generation 2×2 failure diagnosis.
+6. Outcome vs trajectory scoring, and why tools get mocked.
+7. Why a pass rate needs a confidence interval, and why A/B should be paired.
+
+Diff against Days 134–139. Score each; every miss becomes a flashcard written today. This diff, not the re-reading, is the point of a review day — recognition masquerades as mastery until you face a blank page.`,
+      },
+      {
+        title: 'Assemble and run the unified harness',
+        minutes: 35,
+        body: `1. Create \`evals/harness.py\` that imports your week's pieces: golden-set loader (D134), retrieval scorer (D136), programmatic + judge answer scorer (D134/D135/D136), optional agent scorer (D137), and the bootstrap CI (D139).
+2. Make it callable headless: \`python -m evals.harness --set evals/golden_set.jsonl\` prints a JSON summary — overall pass rate with CI, mean context precision/recall with CIs, mean faithfulness, judge agreement, and the list of failing case ids with their diagnosis (retrieval vs generation).
+3. Ensure ≥ 40 golden cases (extend from Day 134; fold in Day 133 red-team cases and Day 138 feedback cases). Confirm coverage across intents.
+4. Run it end-to-end on your capstone. Read the bottleneck verdict: is retrieval or generation your weak point? That single sentence drives your next week of work.
+5. Save the JSON summary to \`evals/latest.json\` — this is the artifact the Day 141 gate will compare against.`,
+        code: `import json, random, argparse
+
+def bootstrap_ci(xs, B=4000, alpha=0.05):
+    n = len(xs); m = []
+    for _ in range(B):
+        m.append(sum(xs[random.randrange(n)] for _ in range(n)) / n)
+    m.sort()
+    return sum(xs)/n, m[int(alpha/2*B)], m[int((1-alpha/2)*B)]
+
+def run_harness(golden_path, answer_fn, retrieve_scores, judge_fn):
+    cases = [json.loads(l) for l in open(golden_path)]
+    passes, cprec, crec, faith, fails = [], [], [], [], []
+    for c in cases:
+        ans = answer_fn(c["question"])
+        ok = judge_fn(c, ans)                      # calibrated judge / programmatic
+        passes.append(int(ok))
+        rp, rr = retrieve_scores(c)                # context precision/recall
+        cprec.append(rp); crec.append(rr)
+        if not ok: fails.append(c["id"])
+    p, lo, hi = bootstrap_ci(passes)
+    return {"n": len(cases),
+            "pass_rate": round(p, 3), "pass_ci": [round(lo,3), round(hi,3)],
+            "context_precision": round(sum(cprec)/len(cprec), 3),
+            "context_recall": round(sum(crec)/len(crec), 3),
+            "failing": fails,
+            "bottleneck": "retrieval" if sum(crec)/len(crec) < 0.7 else "generation"}
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(); ap.add_argument("--set", default="evals/golden_set.jsonl")
+    args = ap.parse_args()
+    # summary = run_harness(args.set, answer, retrieve_scores, judge)
+    # json.dump(summary, open("evals/latest.json", "w"), indent=2)
+    # print(json.dumps(summary, indent=2))`,
+      },
+    ],
+    practice: [
+      {
+        title: 'Calibrate the harness judge on 10 human labels',
+        minutes: 20,
+        body: `Hand-label 10 golden cases PASS/FAIL yourself (your ground truth — the Day 138 protocol applies). Run the harness's judge on the same 10, compute raw agreement and Cohen's kappa (Day 135), and record them in \`evals/harness-calibration.md\`.
+
+If kappa is below ~0.6, iterate the judge prompt or tighten the golden-set criteria until it clears — or, honestly, document that this judge is only trustworthy on part of the distribution and mark which metrics rely on it. Then state, in one sentence per judged metric, whether you trust it given the calibration.
+
+Hints: 10 labels is the checkpoint minimum, not a comfortable number — the CI on kappa from 10 items is wide (Day 139!). Note that too: your calibration itself has uncertainty. The point is the discipline, extended as the set grows.`,
+      },
+    ],
+    project: {
+      title: 'Capstone Eval Harness v1 (Week 20 checkpoint)',
+      brief: `Ship the Week 20 capstone gate. Commit to the capstone repo: (1) \`evals/golden_set.jsonl\` with ≥ 40 cases covering all topics, all four intents, ≥ 5 negatives, plus red-team (D133) and feedback (D138) cases; (2) \`evals/harness.py\`, invocable headless, scoring BOTH retrieval (context precision/recall) AND answers (programmatic + calibrated judge, faithfulness), emitting JSON with confidence intervals; (3) \`evals/harness-calibration.md\` — judge calibrated on ≥ 10 human labels with raw agreement + kappa; (4) \`evals/EVAL-REPORT.md\` — every metric with a 95% CI, per-case failure diagnosis, the retrieval-vs-generation bottleneck verdict, and a proposed regression threshold (outside the noise band) ready for Day 141. Tag it as the eval milestone. This is a headline artifact of your portfolio.`,
+      rubric: [
+        'Golden set ≥ 40 cases, all four intents, ≥ 5 negatives, incl. red-team + feedback cases',
+        'Harness runs headless and scores retrieval AND answers in one invocation',
+        'Judge calibrated on ≥ 10 human labels; raw agreement AND kappa reported',
+        'EVAL-REPORT.md gives every metric a 95% CI and names the current bottleneck with evidence',
+        'A regression threshold outside the noise band is proposed for the Day 141 gate',
+        'Closed-book Week 20 recall diffed against notes; gap flashcards written',
+      ],
+    },
+    mistakes: [
+      'Shipping a harness that only scores final answers. Without retrieval metrics you cannot tell a retrieval miss from a hallucination — the whole Day 136 point.',
+      'An uncalibrated judge in the harness. A judge with unknown agreement makes every judged number untrustworthy; calibrate on human labels and report kappa.',
+      'Reporting metrics without CIs. On a 40-case set the noise band is wide; bare numbers invite shipping decisions on jitter (Day 139).',
+      'A harness you can only run by hand in a notebook. If it is not headless and machine-readable, it cannot become tomorrow\'s CI gate — build for D141 now.',
+      'A golden set missing negatives and red-team cases. It reports a flattering number and lets injection/refusal regressions through silently.',
+      'Treating the review day as re-reading. The closed-book diff is where gaps surface; recognition feels like mastery and is not.',
+    ],
+    quiz: [
+      {
+        q: 'The Day 140 harness reports pass rate 79% (95% CI 67–89%), context recall 0.55, faithfulness 0.94. Where is the system\'s bottleneck?',
+        o: [
+          'Generation — faithfulness should be higher',
+          'Retrieval — context recall 0.55 means needed evidence often isn\'t retrieved; high faithfulness shows generation is fine when given good context',
+          'The judge',
+          'Cannot tell without more metrics',
+        ],
+        x: 1,
+        w: 'High faithfulness (0.94) means the model is faithful to what it retrieves; low recall (0.55) means it often isn\'t given the right evidence. The ceiling is set by retrieval — fix chunking/search/reranking, not the prompt.',
+        revisit: 136,
+      },
+      {
+        q: 'Why must the harness be invocable headless with a machine-readable summary?',
+        o: [
+          'To look professional',
+          'Because tomorrow (Day 141) that exact invocation becomes the CI regression gate; a harness you can only run manually in a notebook cannot gate deploys',
+          'It runs faster that way',
+          'To avoid writing a report',
+        ],
+        x: 1,
+        w: 'The harness\'s whole downstream purpose is automated regression gating. A single command returning JSON is what CI calls on every change; a notebook-only harness cannot protect production.',
+        revisit: 140,
+      },
+      {
+        q: 'From memory: your judge agrees with 10 human labels 90% of the time but Cohen\'s kappa is 0.1. What do you do?',
+        o: [
+          'Trust it — 90% is high',
+          'Distrust it — near-chance agreement on skewed labels means it\'s majority-defaulting; fix the judge/criteria and note the calibration\'s own uncertainty at n=10',
+          'Delete the judge',
+          'Add more judges',
+        ],
+        x: 1,
+        w: 'High raw agreement with kappa ~0 is the base-rate trap (Days 59/135): the judge learned "say PASS," not to judge. And with only 10 labels the kappa estimate is itself uncertain (Day 139) — report both honestly.',
+        revisit: 135,
+      },
+    ],
+    resources: [
+      { label: 'Hamel Husain — Your AI Product Needs Evals', url: 'https://hamel.dev/blog/posts/evals/', type: 'article', time: '25 min' },
+      { label: 'Ragas Documentation — assembling a RAG eval', url: 'https://docs.ragas.io/en/stable/', type: 'docs', time: '20 min' },
+      { label: 'promptfoo Documentation — running eval suites', url: 'https://www.promptfoo.dev/docs/intro/', type: 'docs', time: '20 min' },
+      { label: 'Eugene Yan — Task-Specific LLM Evals', url: 'https://eugeneyan.com/writing/evals/', type: 'article', time: '15 min' },
+    ],
+    schedule: [
+      { activity: 'Spaced-rep: due Week 20 deck (all six lessons)', minutes: 10 },
+      { activity: 'Closed-book recall of Week 20 + diff against notes', minutes: 20 },
+      { activity: 'Assemble and run the unified harness end-to-end', minutes: 40 },
+      { activity: 'Practice: calibrate the judge on 10 human labels', minutes: 20 },
+      { activity: 'Project: finalize harness + eval report', minutes: 15 },
+      { activity: 'Cumulative quiz + write gap flashcards', minutes: 10 },
+    ],
+    completion: [
+      'Closed-book Week 20 recall completed and diffed; gap flashcards written',
+      'Unified harness runs headless and scores retrieval AND answers with CIs',
+      'Judge calibrated on ≥ 10 human labels; agreement + kappa recorded',
+      'EVAL-REPORT.md names the bottleneck and proposes a noise-band regression threshold',
+      'Golden set ≥ 40 cases committed with red-team + feedback cases; cumulative quiz ≥ 2/3',
+    ],
+    connections: {
+      back: 'This fuses the whole week: golden sets (D134), judges (D135), RAG metrics (D136), agent scoring (D137), human ground truth (D138), and statistics (D139) — over the Day 119 capstone, hardened by the Day 133 red-team.',
+      forward: 'Tomorrow (Day 141) this harness becomes a CI regression gate using the noise-band threshold you set. Day 142 traces the requests it scores, Day 145 watches these metrics drift in production, and Day 177 runs this harness as a release gate before Demo Day.',
+    },
+    flashcards: [
+      { f: 'What does the Day 140 harness score, minimum?', b: 'Retrieval (context precision/recall) AND answers (programmatic + calibrated judge, faithfulness) — with confidence intervals — in one headless call.' },
+      { f: 'Why calibrate the harness judge on human labels?', b: 'Judged metrics are only trustworthy if the judge agrees with humans; report raw agreement AND kappa, and note calibration uncertainty at small n.' },
+      { f: 'How does the harness name the bottleneck?', b: 'Low context recall → retrieval; good recall + low faithfulness → generation. The 2×2 diagnosis picks the next fix.' },
+      { f: 'Why must the harness run headless with JSON output?', b: 'So the same invocation becomes the Day 141 CI regression gate; a notebook-only harness cannot gate deploys.' },
+      { f: 'Golden-set bar for the checkpoint?', b: '≥ 40 cases, all four intents, ≥ 5 negatives, plus red-team (D133) and feedback-promoted (D138) cases, versioned in the repo.' },
+    ],
+    deepDive: [
+      { label: 'promptfoo and CI-ready eval harnesses', url: 'https://www.promptfoo.dev/docs/intro/', note: 'Study how promptfoo defines a headless, config-driven eval that returns pass/fail for CI. Your hand-built harness has the same shape — knowing the tooling helps you scale it after Demo Day.' },
+    ],
+  },
 ];
 

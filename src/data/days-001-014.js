@@ -2697,5 +2697,223 @@ Hints (only if stuck): repr(args) and repr(kwargs) make loggable strings. For st
       { label: 'Decorators with state: class-based decorators', note: 'A class with __call__ can decorate too, holding state in self (call counts, rate limits). Ties Day 9 to today — try rewriting @timed as a class in ten lines.' },
     ],
   },
+  {
+    id: 'd013', day: 13, week: 2, phase: 1, kind: 'lesson',
+    title: 'Regex & Text Processing',
+    analogy: 'Find-and-replace with superpowers',
+    objectives: [
+      'Read and write patterns using literals, character classes, quantifiers, groups, and anchors',
+      'Choose correctly among re.search, re.findall, re.finditer, and re.sub',
+      'Extract structured fields from log lines using named groups',
+      'Explain greedy vs lazy matching and fix a pattern that over-matches',
+      'Judge when regex is the wrong tool and use string methods or a parser instead',
+    ],
+    prereqs: [
+      { day: 5, label: 'String methods and text files' },
+      { day: 11, label: 'Streaming lines (today\'s patterns plug into those pipelines)' },
+    ],
+    eli5: `Your editor's find box matches exact text: search "cat" and you get "cat". A **regular expression** is a find box that speaks in *shapes*: "find me a 4-digit number", "find anything shaped like an email address", "find ERROR, but only at the start of a line". You describe the shape once — \`\\d\` means "any digit", \`+\` means "one or more of the previous thing", so \`\\d+\` is "a run of digits" — and the regex engine hunts every match in a haystack of any size.
+
+Think of it as describing a suspect to a sketch artist instead of showing a photo. A photo ("cat") matches one face. A description ("digits, then a dash, then digits") matches every phone number, invoice ID, or date range that fits the shape. **Groups** — parentheses — add a second superpower: capture the parts you care about. "Match date-space-level-space-message, and hand me the three pieces separately" turns a raw log line into structured data, one line of code. The catch: regex is a language of pure punctuation, write-only if you're careless. Today you learn to read it, write it politely, and — just as important — recognize the jobs it should refuse.`,
+    why: `Text is the substrate of AI engineering: cleaning documents before chunking (Day 114), scrubbing PII with redaction patterns (Day 132's guardrails are regex at the front line), extracting fields from semi-structured LLM output when JSON mode isn't available, and parsing logs during incidents (Day 172 — the customer's log format is always slightly weird, and the FDE who can regex it live looks like a wizard). Tomorrow's checkpoint project runs on today's named groups. And "write a pattern to match X" still appears in screening interviews because it cheaply reveals who has processed real text.`,
+    tech: `### The pattern language, in working order
+
+**Literals** match themselves: \`ERROR\`. **Character classes** match one character from a set: \`[abc]\`, ranges \`[0-9]\`, negation \`[^,]\` (anything but a comma), and the shorthands \`\\d\` (digit), \`\\w\` (word character: letters, digits, underscore), \`\\s\` (whitespace), with capitalized negations (\`\\D\`, \`\\W\`, \`\\S\`). The wildcard \`.\` matches any character except newline. **Quantifiers** repeat the previous item: \`*\` (0+), \`+\` (1+), \`?\` (0 or 1), \`{3}\` (exactly 3), \`{1,3}\` (1 to 3). **Anchors** match positions, not characters: \`^\` start, \`$\` end, \`\\b\` word boundary (\`\\berror\\b\` won't match "terrors"). **Groups** \`( )\` capture what they enclose, numbered from 1; **named groups** \`(?P<level>...)\` capture into a name — always prefer names when extracting more than one field. Alternation \`a|b\` picks either; escape metacharacters to match them literally: \`\\.\` for a real dot. Always write patterns as raw strings — \`r"\\d+"\` — so Python's own backslash rules stay out of the way.
+
+### The re module's four verbs
+
+\`re.search(pat, s)\` finds the FIRST match anywhere, returning a match object or None — so the idiom is walrus-free and simple: \`m = re.search(...)\`, then \`if m:\` before using \`m.group("level")\`. \`re.findall\` returns all matches as strings (or tuples when the pattern has groups — a classic surprise). \`re.finditer\` yields match objects lazily — the generator-friendly choice for big streams (Day 11). \`re.sub(pat, repl, s)\` replaces matches, with \`\\g<name>\` backreferences in the replacement. Compile once with \`pat = re.compile(r"...")\` when a pattern runs in a loop.
+
+### Greedy vs lazy, and taste
+
+Quantifiers are **greedy**: they grab the longest match that still lets the pattern succeed. On \`"<b>bold</b> and <i>italic</i>"\`, the pattern \`<.*>\` matches the WHOLE string — the \`.*\` sprinted to the last \`>\`. The lazy variant \`<.*?>\` (quantifier + \`?\`) takes the shortest match: each tag separately. Better still: be specific — \`<[^>]+>\` ("one or more non-> characters") says what you mean and outruns both. Judgment rules: if \`in\`, \`.startswith\`, or \`.split\` solves it, regex is showing off; if the format is a real language with nesting (HTML, JSON, Python), regex structurally cannot parse it — use a real parser (json.loads exists; Day 41 gives you more). Regex earns its keep in the middle: flat, patterned text. For anything beyond one line of pattern, use \`re.VERBOSE\` to add whitespace and comments — patterns are code and deserve readability too.`,
+    viz: null,
+    guided: [
+      {
+        title: 'Shapes, not photos — first patterns',
+        minutes: 15,
+        body: `1. Create \`week-02/regex_lab.py\` with the starter code. Run section 1 and match each result to its pattern. For each of the five patterns, say the shape ALOUD in English before looking at the output ("one or more digits", "the word ERROR at the start of a line"...). Verbalizing patterns is the actual skill.
+2. Predict-then-run: before section 2 executes, write what findall will return for each call as a comment. The \\berror\\b vs error distinction ("terrors"!) is the one to get right.
+3. Modify: change the year pattern to match BOTH 2-digit and 4-digit years (quantifier range {2,4}).
+4. Add one pattern of your own: match a version string like v1.12.3 (hint: escape the dots, or they match anything).
+5. Keep the file open — the next two exercises extend it.`,
+        code: `import re
+
+text = """2026-08-11 ERROR db timeout after 30s
+2026-08-11 INFO user ada logged in from 10.0.0.5
+2026-08-12 WARN retrying request id=4471
+errors and terrors are different words
+contact: ada@example.com or grace@lab.example.org"""
+
+# --- 1: five shapes
+print(re.findall(r"\\d+", text))              # runs of digits
+print(re.findall(r"\\d{4}-\\d{2}-\\d{2}", text)) # ISO dates
+print(re.findall(r"^ERROR", text))            # nothing! ^ = start of STRING...
+print(re.findall(r"(?m)^\\d{4}.*ERROR.*$", text)) # (?m): ^ = start of each LINE
+print(re.findall(r"\\berror\\b", text, re.IGNORECASE))
+
+# --- 2: predict these before running
+print(re.findall(r"error", text))             # matches inside "terrors"?
+print(re.findall(r"\\w+@[\\w.]+", text))        # rough email shape
+print(re.findall(r"id=\\d+", text))`,
+      },
+      {
+        title: 'Groups — from matching to extracting',
+        minutes: 15,
+        body: `1. Extend the lab with the starter code below: a log-line pattern with three NAMED groups. Run it and inspect the dict each line produces.
+2. Walk the pattern left to right and annotate every piece with a comment: what does (?P<date>\\d{4}-\\d{2}-\\d{2}) capture? Why [A-Z]+ for the level? Why does message use .* and why is it safe HERE (anchored at the end, nothing after it)?
+3. The if m: guard matters — feed the pattern the junk line and confirm it returns None instead of crashing. Never call .group on a None: that AttributeError is the most common regex crash in production code.
+4. re.sub practice: redact both email addresses in the text to <redacted>, then a harder one: keep the domain, redacting only the user part (capture the domain in a group, use \\g<domain> in the replacement). PII redaction, ten weeks early.
+5. Convert your findall calls from exercise 1 into finditer where you use the match objects — print each match's .start() position too. finditer is the streaming-friendly form you'll want tomorrow.`,
+        code: `line_pat = re.compile(
+    r"(?P<date>\\d{4}-\\d{2}-\\d{2}) (?P<level>[A-Z]+) (?P<message>.*)"
+)
+
+for line in text.splitlines():
+    m = line_pat.search(line)
+    if m:                                  # junk lines return None
+        print(m.groupdict())
+    else:
+        print("no match:", line[:40])
+
+# redaction with a kept group:
+redacted = re.sub(r"\\w+@(?P<domain>[\\w.]+)", r"<user>@\\g<domain>", text)
+print(redacted)`,
+      },
+      {
+        title: 'Greed, laziness & verbose patterns',
+        minutes: 15,
+        body: `1. New section in the lab: run the greedy-vs-lazy demo on the tags string. Three patterns, three results — greedy .*, lazy .*?, and the specific [^>]+. Write one line on why the specific version is the professional default (it can't backtrack pathologically and it documents intent).
+2. Feel the over-match in realistic data: extract quoted strings from the config line with "(.*)" (wrong — one giant match) then "([^"]*)" (right). Quoted-field extraction is where greed bites everyone once.
+3. Rewrite the log-line pattern from exercise 2 in re.VERBOSE form using the starter below — same pattern, now with comments and breathing room. This is how patterns get code-reviewed.
+4. When NOT to use regex, hands-on: try to imagine matching nested brackets like ((a(b))c) — write in a comment why no regex can count nesting depth (finite automata have no stack). Then note the right tools: json.loads for JSON, an HTML parser for HTML.
+5. Speed habit: for the pattern used in a loop over 200k lines tomorrow, confirm you compiled it once outside the loop.`,
+        code: `tags = "<b>bold</b> and <i>italic</i>"
+print(re.findall(r"<.*>", tags))     # greedy: one huge match
+print(re.findall(r"<.*?>", tags))    # lazy: shortest matches
+print(re.findall(r"<[^>]+>", tags))  # specific: says what it means
+
+config = 'name="tracker" version="1.2" author="ada"'
+print(re.findall(r'"(.*)"', config))    # greedy disaster
+print(re.findall(r'"([^"]*)"', config)) # correct fields
+
+line_pat_verbose = re.compile(r"""
+    (?P<date>\\d{4}-\\d{2}-\\d{2})   # ISO date
+    \\s
+    (?P<level>[A-Z]+)              # INFO / WARN / ERROR
+    \\s
+    (?P<message>.*)                # everything else on the line
+""", re.VERBOSE)`,
+      },
+    ],
+    practice: [
+      {
+        title: 'The extraction gauntlet',
+        minutes: 20,
+        body: `Build \`gauntlet.py\` against the messy text below (paste it as a triple-quoted string):
+
+"Order #4471 shipped to ada@example.com on 2026-08-11. Card ending 4242. Support: +1-555-0134 or +44 20 7946 0958. Order #4472 pending. Ref: v2.1.0-beta. Visit https://status.example.com/incidents?id=99 for updates. Contact grace.hopper@lab.example.org (backup: g.hopper@navy.mil)."
+
+Goal: extract, each with its own compiled pattern: (1) all order numbers; (2) all email addresses — including dotted user parts; (3) all dates; (4) the URL; (5) all phone numbers (both formats — this one is genuinely hard; get the two shown, don't chase perfection); then (6) produce a PII-safe version: emails and card reference redacted, order numbers kept.
+
+Constraints: raw strings everywhere; named groups where you extract sub-parts; every pattern preceded by a comment stating its shape in English.
+
+Hints (only if stuck): phone numbers — alternation of two explicit shapes beats one clever mega-pattern. Perfect email regex doesn't exist (truly matching the spec takes pages); "good enough for this text" is the professional answer — write down that lesson.`,
+      },
+    ],
+    project: {
+      title: 'logparse.py — the parser Day 14 will import',
+      brief: `Build tomorrow's engine today: \`logparse.py\` with a compiled VERBOSE pattern for the app.log format from Day 6 (date, time, level, IP, message) using named groups; a function \`parse_line(line)\` returning the groupdict (with the time field split out) or None for junk; and \`parse_lines(lines)\` — a GENERATOR (Day 11) that takes an iterable of lines and yields parsed dicts, silently counting junk lines in a parse_lines.skipped attribute or returned counter. Include a main-guard demo running it over app.log via a streaming pipeline and printing the first 5 parsed dicts (islice) plus the junk count. Add asserts for three sample lines (one of each level) and one junk line — your first taste of Day 18\'s testing habit. Commit it.`,
+      rubric: [
+        'Pattern is re.VERBOSE with a comment per field and compiled once at module level',
+        'parse_line returns a dict with date, time, level, ip, message keys — or None, never a crash',
+        'parse_lines is a true generator: works inside an islice pipeline without reading the whole file',
+        'Junk lines counted, not raised or printed per-line',
+        'All four asserts pass; running the module directly demos on real app.log',
+        'Committed — Day 14 imports this file unchanged',
+      ],
+    },
+    mistakes: [
+      'Forgetting the r prefix. "\\d" survives by luck but "\\b" becomes a backspace character and your word-boundary pattern silently never matches. Raw strings for every pattern, no exceptions.',
+      'Calling .group() on the result of a failed search. re.search returns None on no-match; guard with if m: first. The AttributeError-on-None is the signature regex crash.',
+      'Using .* between fields and wondering why it swallowed half the line. Greedy quantifiers grab maximally; prefer the specific class ([^,]+, [^>]+) that states what the field CAN contain.',
+      'findall with groups returning tuples (or just the group) when you expected whole matches. Groups change findall\'s return shape — use finditer with .group(0) when you want full matches AND groups.',
+      'Parsing HTML/JSON/nested anything with regex. No regex can count nesting. json.loads and real parsers exist; regex handles flat, line-shaped text.',
+      'Gold-plating patterns to handle every theoretical input (the "perfect email regex"). Match the data you actually have, guard the None case, count the misses — the junk counter tells you if reality disagrees.',
+    ],
+    quiz: [
+      {
+        q: 'Which strings does r"\\d{4}-\\d{2}" fully match?',
+        o: [
+          '"2026-08" and "1999-12"',
+          '"202-08"',
+          '"20260-8"',
+          'Any text containing a dash',
+        ],
+        x: 0,
+        w: '\\d{4} demands exactly four digits, then a literal dash, then exactly two: the year-month shape. The other options break the counts.',
+        revisit: 13,
+      },
+      {
+        q: 'On "<b>hi</b>", the pattern <.*> matches…',
+        o: [
+          '"<b>" only',
+          '"<b>" and "</b>" separately',
+          'The entire "<b>hi</b>" — greedy .* runs to the LAST >',
+          'Nothing — dots don\'t match letters',
+        ],
+        x: 2,
+        w: 'Greedy quantifiers take the longest match that still succeeds, so .* sprints to the final >. Lazy .*? or the specific [^>]+ gives the per-tag matches.',
+        revisit: 13,
+      },
+      {
+        q: 'You need each match\'s captured fields while streaming a 5 GB log. Best verb?',
+        o: [
+          're.findall on the whole file read into memory',
+          're.finditer per line inside a generator pipeline',
+          're.sub with a print in the replacement',
+          'str.split(" ") on every line',
+        ],
+        x: 1,
+        w: 'finditer yields match objects lazily and composes with Day 11\'s constant-memory pipelines; findall-on-everything is the warehouse move that dies at scale.',
+        revisit: 11,
+      },
+    ],
+    resources: [
+      { label: 'Python Regular Expression HOWTO (the official tutorial)', url: 'https://docs.python.org/3/howto/regex.html', type: 'docs', time: '40 min' },
+      { label: 're module — official reference (keep open while writing patterns)', url: 'https://docs.python.org/3/library/re.html', type: 'docs', time: '15 min' },
+      { label: 'Automate the Boring Stuff — Ch. 7: Pattern Matching with Regular Expressions', url: 'https://automatetheboringstuff.com/2e/chapter7/', type: 'book', time: '35 min' },
+    ],
+    schedule: [
+      { activity: 'Spaced-rep warm-up: due cards', minutes: 10 },
+      { activity: 'Concept study: ELI5 + tech — say five patterns aloud in English', minutes: 20 },
+      { activity: 'Guided: shapes, groups, greed & verbose', minutes: 45 },
+      { activity: 'Practice: the extraction gauntlet', minutes: 20 },
+      { activity: 'Project: logparse.py for tomorrow', minutes: 15 },
+      { activity: 'Quiz + flashcards', minutes: 10 },
+    ],
+    completion: [
+      'All three labs run with predictions written before outputs',
+      'Gauntlet extracts all six targets; the "good enough" lesson written down',
+      'logparse.py asserts pass; streaming demo works on app.log',
+      'Redaction exercise produces the PII-safe text with domains kept',
+      'Quiz ≥ 2/3 (redo the greed demo if you missed question 2)',
+    ],
+    connections: {
+      back: 'Regex picks up where Day 5\'s string methods stopped — split and startswith for structure you know, patterns for structure you must DESCRIBE. parse_lines is a Day 11 conveyor belt with a pattern inside, and the raw log is Day 6\'s own app.log.',
+      forward: 'Day 14\'s analyzer imports logparse.py unchanged. Redaction patterns return as Day 132\'s PII guardrails; log forensics with patterns is Day 172\'s customer-debugging bread and butter; and when LLMs emit almost-structured text, Day 110 pairs schema validation with exactly these extraction fallbacks.',
+    },
+    flashcards: [
+      { f: '\\d, \\w, \\s mean…?', b: 'Digit, word character (letter/digit/underscore), whitespace. Capitals negate: \\D, \\W, \\S.' },
+      { f: 'Why raw strings for patterns?', b: 'r"\\b" keeps the backslash for the regex engine; "\\b" is a backspace character — silent pattern death.' },
+      { f: 'Greedy vs lazy vs specific?', b: '.* grabs longest, .*? shortest, [^X]+ states what the field contains — prefer specific.' },
+      { f: 'search vs findall vs finditer?', b: 'search: first match object or None. findall: all as strings/tuples. finditer: lazy match objects — streaming-friendly.' },
+      { f: 'Named group syntax and extraction?', b: '(?P<level>[A-Z]+) in the pattern; m.group("level") or m.groupdict() to extract.' },
+      { f: 'When must you NOT use regex?', b: 'Nested formats (HTML, JSON, code) — regex can\'t count depth. Use a real parser; regex is for flat, patterned text.' },
+    ],
+    deepDive: [
+      { label: 'Catastrophic backtracking', note: 'Patterns like (a+)+$ on a long non-matching string can run for centuries — ambiguous nesting makes the engine try exponential paths. This is a real DoS class (ReDoS). The fix is the habit you learned today: specific classes over stacked greedy quantifiers.' },
+    ],
+  },
 
 ];

@@ -2154,4 +2154,186 @@ Hints: give both context tokens the same key (say [1, 0]) and jam a query aligne
       { label: 'Cross-attention vs self-attention', note: 'In translation-style encoder-decoders, queries come from one sequence and keys/values from another — the same formula, different table. You\'ll recognize it instantly in the Illustrated Transformer\'s decoder figures tomorrow.' },
     ],
   },
+  {
+    id: 'd095', day: 95, week: 14, phase: 5, kind: 'lesson',
+    title: 'The Transformer',
+    analogy: 'The assembly line of attention',
+    objectives: [
+      'Draw a transformer block from memory: attention, residuals, layer norm, FFN',
+      'Explain why position must be injected and how positional encodings do it',
+      'Explain causal masking and why decoder-only models train on every position at once',
+      'Distinguish encoder, decoder, and decoder-only architectures and name a model for each',
+      'Estimate a transformer\'s parameter count from its config (d_model, layers, vocab)',
+    ],
+    prereqs: [
+      { day: 94, label: 'Scaled dot-product attention' },
+      { day: 89, label: 'Normalization & training stability' },
+      { day: 85, label: 'MLPs / feed-forward layers' },
+    ],
+    eli5: `Yesterday you built one meeting room where every word listens to every word. A transformer is the whole office building: the same meeting-then-deskwork floor plan, stacked twelve, forty, ninety-six floors high. On each floor, tokens first hold the attention meeting (gather context from colleagues), then go to their desks for private processing — a small two-layer MLP where each token digests what it heard, alone. Meeting, deskwork, next floor.
+
+Two pieces of office infrastructure make a skyscraper of these floors trainable. First, every meeting and every desk has a bypass corridor: a token's original vector flows AROUND each step and gets the step's output ADDED to it. If a floor has nothing useful to add, the corridor lets information pass unharmed — and, for training, it gives Day 86's blame a clean highway down ninety-six floors instead of dying in the stairwells. Second, at every doorway there's a recalibration station (layer norm) keeping each token's vector in a healthy range, floor after floor.
+
+One oddity to fix at the entrance: the attention meeting is a round table — it has no idea who sits where. "Dog bites man" and "man bites dog" would look identical. So each token's entry badge encodes its seat number: positional information, added to the embedding before floor one.`,
+    why: `This architecture IS the product you will spend your career deploying: GPT, Claude, Llama, the embedding models of Day 115, the rerankers of Day 117 — all this floor plan with different configs. Reading a model card ("32 layers, d_model 4096, 32 heads") should conjure a concrete machine and an approximate parameter count in your head. Causal masking — today's subtlest idea — is why LLM training is so efficient and why generation is one-token-at-a-time, which is TTFT and tokens/sec economics when you budget latency for a customer on Day 155.`,
+    tech: `### The block
+
+x → LayerNorm → multi-head attention → add back to x (residual) → LayerNorm → FFN → add back (residual). That is one block; a model is the embedding layer, N identical blocks, a final LayerNorm, and an output head.
+
+- **Residuals** (x + sublayer(x)): each sublayer learns a REFINEMENT, not a replacement, and gradients flow through the identity path unattenuated — the fix that makes 96-layer training possible at all.
+- **LayerNorm** normalizes each token's vector to zero mean/unit variance, then rescales with learned gain/bias — per token, unlike batch norm's per-batch statistics (Day 89), so it works with any batch size and no train/eval mode difference. Modern GPTs put it BEFORE each sublayer (pre-norm), which trains more stably than the original post-norm.
+- **FFN**: per-token MLP, d_model → 4·d_model → d_model with a nonlinearity (GELU). It holds roughly two-thirds of a block's parameters and is where per-token computation ("deskwork") happens. Attention MOVES information between tokens; the FFN PROCESSES it.
+
+### Position and masking
+
+Attention is permutation-blind, so position is injected at the input: either fixed sinusoidal patterns (the 2017 paper) or, in GPT-style models, a LEARNED position-embedding table added to token embeddings — which hard-caps the context length at the table size.
+
+**Causal masking** makes a decoder-only model autoregressive: before softmax, set every score where j > i to −∞, so token i attends only to positions ≤ i. Softmax turns −∞ into weight 0. The payoff is enormous: during training, ALL n positions are simultaneously valid next-token predictions — one forward pass yields n training examples with no future-peeking (Day 97 relies on this).
+
+### Three silhouettes and parameter counting
+
+Encoder-only (BERT-family): no mask, sees both directions — embeddings and classification (Day 115's embedders). Decoder-only (GPT, Claude, Llama): causal mask, generates. Encoder–decoder (T5, translation): encoder reads, decoder writes via cross-attention. Parameter math per block ≈ 4·d² (attention: Q, K, V, output projections) + 8·d² (FFN: two d↔4d matrices) = 12·d². Whole model ≈ 12·L·d² + vocab·d (embeddings). GPT-2 small — L=12, d=768 — gives 12·12·768² ≈ 85M plus 50257·768 ≈ 39M ≈ 124M with position table: the famous "124M". You can now do this on a napkin for any model card.`,
+    viz: 'transformer-stack',
+    guided: [
+      {
+        title: 'Illustrated Transformer read-along, actively',
+        minutes: 25,
+        body: `1. Open The Illustrated Transformer and read from the top through the encoder section, slowly.
+2. As you read, redraw each major figure BY HAND on paper: the QKV projections, the multi-head split, the residual+norm wrapper, the FFN. Redrawing is the active ingredient — no screenshots.
+3. When you reach the decoder section, write in the margin where the causal mask enters, and which attention layer of the decoder is cross-attention (queries from the decoder, keys/values from the encoder — Day 94\'s deep-dive).
+4. Close the article. Draw one complete decoder-only block from memory, labeling every arrow. Check and mark gaps in red.
+5. File the drawing — Day 98 asks you to redo it cold.`,
+      },
+      {
+        title: 'Causal masking in NumPy + trace one token',
+        minutes: 25,
+        body: `1. Import attention() from your attention_lab.py and add a \`causal=True\` option: build a mask where score[i][j] = -1e9 for j > i, added before softmax.
+2. Run it on Day 94\'s 4-token example. Verify: row 1 attends 100% to itself; row 4 is UNCHANGED from yesterday ([0.221, 0.221, 0.449, 0.109]) because token 4 could already see everyone. The weight matrix must be lower-triangular.
+3. Print the ASCII heatmap and confirm the upper triangle is blank.
+4. Now trace one token through one block on paper, shapes only, d_model = 8, seq = 4: x (4×8) → +position (4×8) → LN → attention (4×8) → +x → LN → FFN 8→32→8 → +.  Write every shape at every arrow; nothing changes shape end to end — that invariant is what lets blocks stack.
+5. Parameter count for this toy block: attention 4·8² = 256, FFN 8·32·2 = 512 (ignore biases) — confirm 12·d² = 768. Then do GPT-2 small on the napkin: 12·12·768² + 50257·768 ≈ 124M.`,
+        code: `import numpy as np
+from attention_lab import softmax   # your Day-94 artifact
+
+def attention(Q, K, V, causal=False):
+    d_k = Q.shape[-1]
+    scores = Q @ K.T / np.sqrt(d_k)
+    if causal:
+        n = scores.shape[0]
+        mask = np.triu(np.ones((n, n)), k=1)   # 1s above the diagonal
+        scores = scores - 1e9 * mask           # -inf-ish where j > i
+    w = softmax(scores, axis=-1)
+    return w @ V, w
+
+Q = np.array([[1.,0.], [0.,2.], [1.,0.], [1.,1.]])
+K = np.array([[1.,0.], [0.,1.], [1.,1.], [0.,0.]])
+V = np.array([[1.,0.], [0.,2.], [2.,2.], [0.,0.]])
+
+out, w = attention(Q, K, V, causal=True)
+print(np.round(w, 3))
+# row 1: [1. 0. 0. 0.]         — can only see itself
+# row 4: [0.221 0.221 0.449 0.109] — unchanged: it saw everyone anyway`,
+      },
+    ],
+    practice: [
+      {
+        title: 'Model-card napkin math',
+        minutes: 20,
+        body: `Using only params ≈ 12·L·d² + vocab·d, estimate total parameters for: (a) L=24, d=1024, vocab=50k; (b) L=32, d=4096, vocab=128k; (c) your Day-97 tiny GPT: L=4, d=128, vocab=65. Then answer: (1) for model (b), what fraction of parameters is embeddings vs blocks? (2) if you double d at fixed L, what happens to block parameters? (3) which grows a model faster, doubling L or doubling d, and why?
+
+Constraints: napkin only — no code until you have three written estimates; then verify with a 5-line script.
+
+Hints: (a) ≈ 353M; blocks scale as d² so doubling d quadruples them while doubling L merely doubles them.`,
+      },
+    ],
+    project: {
+      title: 'The annotated block diagram + masked attention',
+      brief: `Commit two artifacts: (1) \`causal_attention.py\` — the masked attention with assertions that row 1 is one-hot and row 4 matches Day 94, plus the lower-triangular heatmap; (2) \`transformer_notes.md\` — your from-memory block diagram (photo or ASCII art), the per-arrow shape trace at d_model = 8, the napkin parameter math for GPT-2 small and the three practice configs, and a five-line "why residuals, why layer norm, why mask" section in your own words. These notes are the spec you will build against on Day 97 — every component you can\'t explain today becomes a bug you can\'t find tomorrow.`,
+      rubric: [
+        'causal attention asserts both row properties and renders a lower-triangular heatmap',
+        'Block diagram drawn from memory with ≤ 2 red-mark corrections',
+        'Shape trace shows (seq, d_model) preserved through every sublayer',
+        'GPT-2 small napkin math lands within 10% of 124M with steps shown',
+        'All three practice configs estimated and script-verified',
+        'why-residuals/norm/mask section written without quoting sources',
+      ],
+    },
+    mistakes: [
+      'Thinking attention does the "thinking." Attention routes information BETWEEN tokens; the FFN (two-thirds of the parameters) processes it per token. Both halves matter.',
+      'Forgetting position entirely — attention alone cannot distinguish "dog bites man" from "man bites dog". If a from-scratch transformer outputs order-independent nonsense, the missing position embedding is the first suspect.',
+      'Confusing layer norm with batch norm. LN is per-token (no batch statistics, no train/eval difference); BN\'s Day-89 caveats do not apply.',
+      'Placing the causal mask after softmax. The −∞ must enter BEFORE normalization so masked positions get exactly zero weight and rows still sum to 1.',
+      'Believing generation-time causality is a special mode. The mask is there during training too — that is what makes all n positions honest training examples in one pass.',
+      'Reading "96 layers" as 96 different designs. It is one block stamped 96 times — which is why the residual stream must keep its shape, and why your shape trace matters.',
+    ],
+    quiz: [
+      {
+        q: 'Why do transformers need positional encodings?',
+        o: [
+          'To make training converge faster',
+          'Attention is permutation-invariant — without position, word order is invisible',
+          'To reduce the O(n²) attention cost',
+          'To normalize token vectors',
+        ],
+        x: 1,
+        w: 'Q·K scores don\'t change if you shuffle the tokens; the mechanism sees a bag of vectors. Injecting position at the input restores order information.',
+        revisit: 95,
+      },
+      {
+        q: 'The causal mask sets scores to −∞ for j > i BEFORE softmax so that…',
+        o: [
+          'Future tokens get exactly zero weight while each row still sums to 1',
+          'The matrix becomes symmetric',
+          'Gradients are clipped automatically',
+          'The model can attend to padding tokens',
+        ],
+        x: 0,
+        w: 'e^(−∞) = 0, and softmax renormalizes the remaining scores. Masking after softmax would leave rows summing to less than 1 and leak probability mass.',
+        revisit: 95,
+      },
+      {
+        q: 'Roughly how many parameters does a decoder-only model with L=12, d=768, vocab=50k have?',
+        o: ['12M', '50M', '~124M', '~1B'],
+        x: 2,
+        w: 'Blocks: 12·L·d² = 12·12·768² ≈ 85M. Embeddings: 50k·768 ≈ 39M. Total ≈ 124M — GPT-2 small. The napkin formula gets you within 10% of any model card.',
+        revisit: 95,
+      },
+    ],
+    resources: [
+      { label: 'Jay Alammar — The Illustrated Transformer (full read-along)', url: 'https://jalammar.github.io/illustrated-transformer/', type: 'article', time: '45 min' },
+      { label: 'Attention Is All You Need — architecture sections (§3) with figures', url: 'https://arxiv.org/abs/1706.03762', type: 'paper', time: '25 min' },
+      { label: '3Blue1Brown NN playlist — transformer chapters', url: 'https://www.youtube.com/playlist?list=PLZHQObOWTQDNU6R1_67000Dx_ZCJB-3pi', type: 'video', time: '25 min' },
+      { label: 'nanoGPT — read model.py top to bottom (tomorrow\'s blueprint)', url: 'https://github.com/karpathy/nanoGPT', type: 'repo', time: '20 min' },
+    ],
+    schedule: [
+      { activity: 'Spaced-rep warm-up: Day 94 attention cards', minutes: 10 },
+      { activity: 'Guided 1: Illustrated Transformer active read-along with redrawing', minutes: 25 },
+      { activity: 'Tech read + transformer-stack visualizer', minutes: 15 },
+      { activity: 'Guided 2: causal masking + shape trace + napkin math', minutes: 25 },
+      { activity: 'Practice: model-card estimates', minutes: 20 },
+      { activity: 'Project commit + quiz + flashcards', minutes: 20 },
+    ],
+    completion: [
+      'Block diagram reproduced from memory with gaps marked and fixed',
+      'Causal attention verified (one-hot row 1, unchanged row 4, lower-triangular map)',
+      'GPT-2 napkin math within 10% and practice configs verified by script',
+      'transformer_notes.md committed as the Day-97 build spec',
+      'Quiz ≥ 2/3',
+    ],
+    connections: {
+      back: 'The block wraps Day 94\'s attention with Day 85\'s MLP as the FFN; residuals are Day 86\'s gradient-highway lesson built into architecture; layer norm is Day 89\'s normalization idea, per token.',
+      forward: 'Day 96 decides what the tokens ARE. Day 97 turns transformer_notes.md into working code, Day 100 explains how these stacks are trained at scale, Day 101 prices the n² and the context cap you met today, and Day 128\'s LoRA surgically edits exactly these weight matrices.',
+    },
+    flashcards: [
+      { f: 'One transformer block, in order (pre-norm GPT style)?', b: 'LN → multi-head attention → residual add → LN → FFN (d→4d→d) → residual add.' },
+      { f: 'Why residual connections?', b: 'Sublayers learn refinements, and gradients flow unattenuated through the identity path — deep stacks become trainable.' },
+      { f: 'LayerNorm vs BatchNorm?', b: 'LN: per-token statistics, batch-size independent, no train/eval difference — the transformer choice.' },
+      { f: 'Attention vs FFN division of labor?', b: 'Attention moves information between tokens; the FFN (≈2/3 of block params) processes each token privately.' },
+      { f: 'Napkin parameter formula?', b: '≈ 12·L·d² (blocks) + vocab·d (embeddings). GPT-2 small: 12·12·768² + 50k·768 ≈ 124M.' },
+      { f: 'Why does causal masking make training efficient?', b: 'Every position is a valid next-token example in one forward pass — n examples per sequence, no future leakage.' },
+    ],
+    deepDive: [
+      { label: 'Learned vs sinusoidal vs rotary positions', note: 'GPT-2 learns a position table (hard context cap); the 2017 paper used fixed sinusoids; modern models (Llama-family) use RoPE, rotating Q/K by position angle. Worth a search once Day 97\'s build makes position embeddings concrete.' },
+    ],
+  },
 ];

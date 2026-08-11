@@ -1,7 +1,13 @@
-// Visualizer access layer. Step-scripts live in src/data/visualizers.js;
+// Visualizer access layer. Step-scripts live in src/data/visualizers*.js;
 // each is an array of frames rendered by one of 12 shared families.
 // @ts-ignore untyped data module
-import { VIZ } from "@/data/visualizers";
+import { VIZ as VIZ1 } from "@/data/visualizers";
+// @ts-ignore untyped data module
+import { VIZ2 } from "@/data/visualizers-2";
+// @ts-ignore untyped data module
+import { VIZ3 } from "@/data/visualizers-3";
+
+const VIZ = { ...(VIZ1 as object), ...(VIZ2 as object), ...(VIZ3 as object) };
 
 export interface Predict {
   q: string;
